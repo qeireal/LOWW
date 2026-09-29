@@ -1,0 +1,48 @@
+{
+  "Name": "LOWW",
+  "Version": "0.2.1",
+  "Factory Info": {
+    "Vendor": "LOWW Audio",
+    "URL": "",
+    "E-Mail": "",
+    "Flags": {
+      "Unicode": true,
+      "Classes Discardable": false,
+      "Component Non Discardable": false,
+    },
+  },
+  "Classes": [
+    {
+      "CID": "ABCDEF019182FAEB5472666C54726662",
+      "Category": "Audio Module Class",
+      "Name": "LOWW",
+      "Vendor": "LOWW Audio",
+      "Version": "0.2.1",
+      "SDKVersion": "VST 3.8.0",
+      "Sub Categories": [
+        "Fx",
+        "Distortion",
+      ],
+      "Class Flags": 0,
+      "Cardinality": 2147483647,
+      "Snapshots": [
+      ],
+    },
+    {
+      "CID": "ABCDEF011234ABCD5472666C54726662",
+      "Category": "Component Controller Class",
+      "Name": "LOWW",
+      "Vendor": "LOWW Audio",
+      "Version": "0.2.1",
+      "SDKVersion": "VST 3.8.0",
+      "Sub Categories": [
+        "Fx",
+        "Distortion",
+      ],
+      "Class Flags": 0,
+      "Cardinality": 2147483647,
+      "Snapshots": [
+      ],
+    },
+  ],
+}

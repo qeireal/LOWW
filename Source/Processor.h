@@ -40,7 +40,11 @@ public:
     void clearMidi(const juce::String& parameter);
     bool readTuner(float* destination, int count);
     juce::String presetName() const;
-    juce::Result savePreset(const juce::File&);
+    juce::String presetInfo() const;
+    // Counts successful host state restores so the editor can drop a stale save target.
+    std::atomic<int> hostRestoreCount {0};
+    // A non-negative expectedHostRestores refuses to save if a host restore happened since then.
+    juce::Result savePreset(const juce::File&, int expectedHostRestores = -1);
     juce::Result openPreset(const juce::File&);
     static juce::File presetFolder();
     std::atomic<double> currentRate {48000};
@@ -67,6 +71,8 @@ private:
     std::array<std::atomic<IRPacket*>, 2> pendingIR {};
     std::atomic<IRPacket*> retiredIR {nullptr};
     juce::CriticalSection irProducerLock;
+    // Guards direct state.state metadata access: hosts may restore state off the message thread.
+    juce::CriticalSection metadataLock;
     juce::AbstractFifo spectrumQueue {8192};
     std::array<float, 8192> spectrumData {};
     juce::AbstractFifo tunerQueue {32768};

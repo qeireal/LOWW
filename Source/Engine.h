@@ -47,7 +47,7 @@ private:
     juce::AudioBuffer<float> bands, dry, cabB, pitchInput, pitched;
     signalsmith::stretch::SignalsmithStretch<float> pitch;
     int baseLatency = 0, pitchLatency = 0;
-    bool previousParallel = false;
+    bool previousParallel = false, primed = false;
     float gainReduction = 0;
     juce::SmoothedValue<float> monoBlend;
     Biquad fixedMid;

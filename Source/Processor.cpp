@@ -80,6 +80,7 @@ void LOWWProcessor::prepareToPlay(double sr, int block) {
     engine.prepare(sr, block, settings().transpose);
     setLatencySamples(engine.latency());
 }
+// getRawParameterValue takes a StringRef and searches a StringRef-keyed map, so this never allocates.
 float LOWWProcessor::value(const char* id) const { return state.getRawParameterValue(id)->load(); }
 loww::Settings LOWWProcessor::settings() const {
     loww::Settings s;
@@ -225,6 +226,8 @@ juce::Result LOWWProcessor::loadIRFile(const juce::File& file, int slot) {
         data.append(ir.getReadPointer(ch), (size_t) ir.getNumSamples() * sizeof(float));
     }
     const auto channels = ir.getNumChannels(), samples = ir.getNumSamples();
+    // Queue and describe the IR in one transaction so a concurrent host restore can't interleave.
+    const juce::ScopedLock metadata(metadataLock);
     auto result = queueIR(std::move(ir), reader->sampleRate, slot);
     if (result.failed()) return result;
     state.state.setProperty("irData" + suffix, data.toBase64Encoding(), nullptr);
@@ -238,6 +241,7 @@ juce::Result LOWWProcessor::loadIRFile(const juce::File& file, int slot) {
 juce::Result LOWWProcessor::restoreStockCab(int slot) {
     if (slot < 0 || slot > 1) return juce::Result::fail("Invalid cabinet slot");
     const juce::String suffix = slot == 0 ? "" : "B";
+    const juce::ScopedLock metadata(metadataLock);
     auto result = queueIR(loww::Engine::makeStockIR(), 48000, slot);
     if (result.wasOk()) {
         state.state.removeProperty("irData" + suffix, nullptr);
@@ -248,10 +252,11 @@ juce::Result LOWWProcessor::restoreStockCab(int slot) {
 }
 juce::String LOWWProcessor::cabinetName(int slot) {
     const juce::String suffix = slot == 0 ? "" : "B";
+    const juce::ScopedLock metadata(metadataLock);
     return state.state.hasProperty("irData" + suffix) ? state.state.getProperty("cabinet" + suffix).toString() : "Studio / synthetic";
 }
 void LOWWProcessor::getStateInformation(juce::MemoryBlock& block) {
-    auto tree = state.copyState();
+    auto tree = [this] { const juce::ScopedLock metadata(metadataLock); return state.copyState(); }();
     tree.setProperty("presetDirty", presetDirty.load(), nullptr);
     for (int cc = 0; cc < 128; ++cc) {
         tree.removeProperty("midiCC" + juce::String(cc), nullptr);
@@ -263,7 +268,8 @@ void LOWWProcessor::getStateInformation(juce::MemoryBlock& block) {
     if (auto xml = tree.createXml()) copyXmlToBinary(*xml, block);
 }
 void LOWWProcessor::setStateInformation(const void* data, int bytes) {
-    (void) restoreState(data, bytes);
+    const juce::ScopedLock metadata(metadataLock);
+    if (restoreState(data, bytes).wasOk()) ++hostRestoreCount;
 }
 juce::Result LOWWProcessor::restoreState(const void* data, int bytes) {
     if (bytes < 1 || bytes > 16 * 1024 * 1024) return juce::Result::fail("Invalid preset size");
@@ -308,6 +314,7 @@ juce::Result LOWWProcessor::restoreState(const void* data, int bytes) {
             for (int i = 0; i < samples; ++i) if (!std::isfinite(ir.getSample(ch,i))) return juce::Result::fail("Invalid IR samples");
         }
     }
+    const juce::ScopedLock metadata(metadataLock);
     for (int slot = 0; slot < 2; ++slot) queueIR(std::move(decoded[(size_t)slot]), rates[(size_t)slot], slot);
     state.replaceState(tree);
     for (int cc = 0; cc < 128; ++cc) {
@@ -365,15 +372,26 @@ void LOWWProcessor::applyFactoryPreset(int index) {
         if (index == 9) { set("midOn",0); set("highOn",0); }
         for (int i = 0; i < 6; ++i) set(("eq"+juce::String(i)).toRawUTF8(), r.eq[(size_t)i]);
     }
+    const juce::ScopedLock metadata(metadataLock);
     state.state.setProperty("presetName", presetNames()[index], nullptr);
     state.state.setProperty("presetDescription", presetDescription(index), nullptr);
     presetDirty.store(false);
 }
-juce::String LOWWProcessor::presetName() const { return state.state.getProperty("presetName", "Untitled").toString(); }
+juce::String LOWWProcessor::presetName() const {
+    const juce::ScopedLock metadata(metadataLock);
+    return state.state.getProperty("presetName", "Untitled").toString();
+}
+juce::String LOWWProcessor::presetInfo() const {
+    const juce::ScopedLock metadata(metadataLock);
+    return state.state.getProperty("presetDescription").toString();
+}
 juce::File LOWWProcessor::presetFolder() {
     return juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile("LOWW Presets");
 }
-juce::Result LOWWProcessor::savePreset(const juce::File& file) {
+juce::Result LOWWProcessor::savePreset(const juce::File& file, int expectedHostRestores) {
+    const juce::ScopedLock metadata(metadataLock);
+    if (expectedHostRestores >= 0 && expectedHostRestores != hostRestoreCount.load())
+        return juce::Result::fail("The host replaced this tone; use Save as to choose a file");
     auto tree = state.copyState();
     tree.setProperty("presetName", file.getFileNameWithoutExtension(), nullptr);
     tree.setProperty("presetDirty", false, nullptr);
@@ -387,6 +405,8 @@ juce::Result LOWWProcessor::savePreset(const juce::File& file) {
     return juce::Result::ok();
 }
 juce::Result LOWWProcessor::openPreset(const juce::File& file) {
+    // One transaction, so a concurrent host restore can't interleave with the MIDI map and name updates.
+    const juce::ScopedLock metadata(metadataLock);
     if (file.getSize() > 16 * 1024 * 1024) return juce::Result::fail("Preset is too large");
     juce::MemoryBlock block;
     if (!file.loadFileAsData(block)) return juce::Result::fail("Couldn't read preset");

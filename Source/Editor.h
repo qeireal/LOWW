@@ -42,6 +42,8 @@ private:
     void stepPreset(int direction);
     void updateTuner();
     void presetFile(bool saving);
+    void savePresetAs(const juce::File&);
+    void forgetFileAfterHostRestore();
     void showResult(const juce::Result&);
     void drawGraph(juce::Graphics&, juce::Rectangle<float>);
     void drawMeter(juce::Graphics&, juce::Rectangle<float>, float, const juce::String&);
@@ -59,6 +61,7 @@ private:
     juce::Array<juce::File> userPresets;
     juce::File currentFile;
     int currentFactory = -1;
+    int seenHostRestores = 0;
     int draggedBand = -1;
     juce::String draggedFrequency, draggedLevel;
     float uiScale = 1;

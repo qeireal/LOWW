@@ -243,7 +243,7 @@ LOWWEditor::Dial::Dial(LOWWProcessor& p, const char* id, const juce::String& tit
 void LOWWEditor::Dial::resized() {
     auto r = getLocalBounds(); label.setBounds(r.removeFromTop(19)); slider.setBounds(r);
 }
-LOWWEditor::LOWWEditor(LOWWProcessor& p) : AudioProcessorEditor(p), owner(p) {
+LOWWEditor::LOWWEditor(LOWWProcessor& p) : AudioProcessorEditor(p), owner(p), seenHostRestores(p.hostRestoreCount.load()) {
     setLookAndFeel(&theme);
     const auto add = [&](const char* id, const char* label, juce::Colour colour, bool vertical = false) {
         auto dial = std::make_unique<Dial>(p,id,label,colour,vertical); addAndMakeVisible(*dial); dials.push_back(std::move(dial));
@@ -283,8 +283,9 @@ LOWWEditor::LOWWEditor(LOWWProcessor& p) : AudioProcessorEditor(p), owner(p) {
     previous.onClick = [this] { stepPreset(-1); }; next.onClick = [this] { stepPreset(1); };
     save.onClick = [this] { presetFile(true); }; load.onClick = [this] { presetFile(false); };
     overwrite.onClick = [this] {
+        forgetFileAfterHostRestore();
         if (currentFile == juce::File()) { presetFile(true); return; }
-        const auto result = owner.savePreset(currentFile);
+        const auto result = owner.savePreset(currentFile, seenHostRestores);
         status.setText(result.wasOk() ? "Preset saved" : result.getErrorMessage(),juce::dontSendNotification);
     };
     folder.onClick = [this] {
@@ -560,12 +561,13 @@ void LOWWEditor::timerCallback() {
         for(size_t i=0;i<spectrum.size();++i) spectrum[i]=juce::jmax(fftData[i]/512.f,spectrum[i]*.85f);
     } else for(auto& bin:spectrum) bin*=.9f;
     if(++tunerTicks%3==0) updateTuner();
+    forgetFileAfterHostRestore();
     const auto s=owner.settings(); dials[5]->setVisible(!s.parallel); dials[24]->setVisible(s.parallel); dials[10]->setVisible(!s.parallel); dials[19]->setVisible(s.parallel);
     dials[12]->label.setText(s.parallel ? "100 LS" : "80",juce::dontSendNotification);
     dials[17]->label.setText(s.parallel ? "5k HS" : "5k",juce::dontSendNotification);
     presets.setText(owner.presetName()+(owner.presetDirty.load() ? " *" : ""),juce::dontSendNotification);
     const auto pitchInfo = std::abs(s.transpose) > .001f ? "  /  transpose latency " + juce::String(1000.0*owner.getLatencySamples()/owner.currentRate.load(),1) + " ms" : juce::String();
-    presetInfo.setText(owner.state.state.getProperty("presetDescription").toString()+pitchInfo,juce::dontSendNotification);
+    presetInfo.setText(owner.presetInfo()+pitchInfo,juce::dontSendNotification);
     if(owner.midiLearn.load()>=0) status.setText("MIDI learn: move a controller. Right-click a dial and Clear to cancel.",juce::dontSendNotification);
     repaint();
 }
@@ -576,6 +578,17 @@ void LOWWEditor::chooseIR(int slot) {
         if(safe && fc.getResult().existsAsFile()) safe->showResult(safe->owner.loadIRFile(fc.getResult(),slot));
     });
 }
+void LOWWEditor::forgetFileAfterHostRestore() {
+    // A host recall replaces the tone, so Save must not write it over the previously opened file.
+    const int restores=owner.hostRestoreCount.load();
+    if(restores==seenHostRestores) return;
+    seenHostRestores=restores; currentFile=juce::File(); currentFactory=-1;
+}
+void LOWWEditor::savePresetAs(const juce::File& file) {
+    const auto result=owner.savePreset(file);
+    if(result.wasOk()) { currentFile=file; currentFactory=-1; refreshPresets(); }
+    status.setText(result.wasOk() ? "Preset saved" : result.getErrorMessage(),juce::dontSendNotification);
+}
 void LOWWEditor::presetFile(bool saving) {
     const auto dir=LOWWProcessor::presetFolder();
     if(saving) { const auto result=dir.createDirectory(); if(result.failed()) { status.setText(result.getErrorMessage(),juce::dontSendNotification); return; } }
@@ -583,9 +596,16 @@ void LOWWEditor::presetFile(bool saving) {
     chooser->launchAsync((saving ? juce::FileBrowserComponent::saveMode|juce::FileBrowserComponent::warnAboutOverwriting : juce::FileBrowserComponent::openMode)|juce::FileBrowserComponent::canSelectFiles,
         [safe=juce::Component::SafePointer<LOWWEditor>(this),saving](const juce::FileChooser& fc) {
             if(!safe || fc.getResult()==juce::File()) return;
-            auto file=saving ? fc.getResult().withFileExtension("loww") : fc.getResult();
-            const auto result=saving ? safe->owner.savePreset(file) : safe->owner.openPreset(file);
-            if(result.wasOk()) { safe->currentFile=file; safe->currentFactory=-1; safe->refreshPresets(); }
-            safe->status.setText(result.wasOk() ? (saving ? "Preset saved" : "Preset opened") : result.getErrorMessage(),juce::dontSendNotification);
+            if(!saving) {
+                const auto file=fc.getResult(); const auto result=safe->owner.openPreset(file);
+                if(result.wasOk()) { safe->currentFile=file; safe->currentFactory=-1; safe->refreshPresets(); }
+                safe->status.setText(result.wasOk() ? "Preset opened" : result.getErrorMessage(),juce::dontSendNotification);
+                return;
+            }
+            const auto file=fc.getResult().withFileExtension("loww");
+            // The chooser only confirmed the name as typed; confirm again if forcing .loww hits an existing file.
+            if(file==fc.getResult() || !file.exists()) { safe->savePresetAs(file); return; }
+            juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::WarningIcon,"Replace preset?",file.getFileName()+" already exists. Replace it?","Replace","Cancel",safe.getComponent(),
+                juce::ModalCallbackFunction::create([safe,file](int replace) { if(safe && replace==1) safe->savePresetAs(file); }));
         });
 }

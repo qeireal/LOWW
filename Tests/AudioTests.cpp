@@ -3,11 +3,24 @@
 #include "Logo.h"
 #include <iostream>
 #include <stdexcept>
+#include <thread>
 #include "MonitoringTests.h"
 #if JUCE_MAC
 #include <AudioToolbox/AudioToolbox.h>
 #include <dlfcn.h>
 #endif
+
+// Counts operator new calls made while a test marks the current thread as real-time.
+// JUCE's HeapBlock calls malloc directly, so this guards C++ allocations, not every heap use.
+static thread_local bool countAllocations = false;
+static std::atomic<int> realtimeAllocations {0};
+void* operator new(std::size_t size) {
+    if (countAllocations) ++realtimeAllocations;
+    if (auto* memory = std::malloc(size == 0 ? 1 : size)) return memory;
+    throw std::bad_alloc();
+}
+void operator delete(void* memory) noexcept { std::free(memory); }
+void operator delete(void* memory, std::size_t) noexcept { std::free(memory); }
 
 namespace {
 void require(bool condition, const char* message) {
@@ -268,6 +281,95 @@ void testPresetMigrationAndMidi() {
     audio.clear(); metronome.processBlock(audio,midi); require(audio.getMagnitude(0,256)>.01,"Metronome is silent");
     std::cout << "PASS legacy migration, preset identity/file recall, MIDI learn/clear/recall, factory bank, metronome\n";
 }
+// Renders one second of a 110 Hz burst (0.1-0.4 s) and returns channel 0.
+std::vector<float> renderBurst(const loww::Settings& s, int& latency) {
+    loww::Engine engine; engine.useStockCab(); engine.prepare(48000, 256, s.transpose);
+    std::vector<float> out;
+    for (int offset = 0; offset < 48000; offset += 256) {
+        juce::AudioBuffer<float> audio(2, 256);
+        for (int i = 0; i < 256; ++i) {
+            const auto n = offset + i;
+            const auto v = n >= 4800 && n < 19200 ? .1f * (float) std::sin(juce::MathConstants<double>::twoPi * 110 * n / 48000) : 0.f;
+            audio.setSample(0, i, v); audio.setSample(1, i, v);
+        }
+        engine.process(audio, s);
+        for (int i = 0; i < 256; ++i) out.push_back(audio.getSample(0, i));
+    }
+    latency = engine.latency();
+    return out;
+}
+void testGateTransposeMonoAndPriming() {
+    // The gate must track the pitched signal it gates, not the earlier raw input.
+    auto open = neutral(); open.transpose = 12;
+    auto gated = open; gated.gateOn = true; gated.gate = -26;
+    int latency = 0;
+    const auto reference = renderBurst(open, latency), withGate = renderBurst(gated, latency);
+    const auto tail = [&](const std::vector<float>& x) {
+        return rms(std::vector<float>(x.begin() + 16320 + latency, x.begin() + 19200 + latency));
+    };
+    require(20 * std::log10(tail(withGate) / tail(reference)) > -1, "Gate cuts transposed note tails");
+    // A bypassed engine must start bypassed after prepare, not fade in from processed audio.
+    loww::Engine engine; engine.useStockCab(); engine.prepare(48000, 512);
+    loww::Settings bypassed; bypassed.bypass = true; bypassed.midDrive = 1;
+    juce::AudioBuffer<float> audio(2, 512), input(2, 512);
+    for (int i = 0; i < 512; ++i) for (int ch = 0; ch < 2; ++ch) input.setSample(ch, i, .4f * (float) std::sin(.05 * i));
+    audio.makeCopyOf(input); engine.process(audio, bypassed);
+    for (int i = engine.latency(); i < 512; ++i)
+        require(std::abs(audio.getSample(0, i) - input.getSample(0, i - engine.latency())) < 1e-5f, "Bypass fades in after prepare");
+    // Mono hosts use the single-channel engine path.
+    loww::Engine mono; mono.prepare(48000, 256);
+    std::vector<float> monoOut;
+    for (int offset = 0; offset < 48000; offset += 256) {
+        juce::AudioBuffer<float> buffer(1, 256);
+        for (int i = 0; i < 256; ++i) buffer.setSample(0, i, .1f * (float) std::sin(juce::MathConstants<double>::twoPi * 440 * (offset + i) / 48000));
+        mono.process(buffer, neutral());
+        if (offset > 24000) for (int i = 0; i < 256; ++i) monoOut.push_back(buffer.getSample(0, i));
+    }
+    require(std::abs(20 * std::log10(rms(monoOut) / (.1 / std::sqrt(2.0)))) < .25, "Mono engine path is not neutral");
+    // Transpose crossing zero during playback updates the reported latency.
+    LOWWProcessor p; p.prepareToPlay(48000, 256);
+    juce::AudioBuffer<float> block(2, 256); juce::MidiBuffer midi;
+    const auto base = p.getLatencySamples();
+    for (const float semitones : {12.f, 0.f}) {
+        setParameter(p, "transpose", semitones);
+        for (int b = 0; b < 20; ++b) {
+            for (int i = 0; i < 256; ++i) for (int ch = 0; ch < 2; ++ch) block.setSample(ch, i, .1f * (float) std::sin(.03 * (b * 256 + i)));
+            p.processBlock(block, midi);
+            for (int ch = 0; ch < 2; ++ch) for (int i = 0; i < 256; ++i) require(std::isfinite(block.getSample(ch, i)), "Transpose switch is unstable");
+        }
+        require((semitones != 0) == (p.getLatencySamples() > base), "Reported latency ignores live transpose");
+    }
+    std::cout << "PASS transposed gate timing, bypass after prepare, mono engine, live transpose latency\n";
+}
+void testHostRecallAndRealtime() {
+    LOWWProcessor p; p.prepareToPlay(48000,256);
+    juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer midi;
+    auto block=[&](int b) {
+        for(int ch=0;ch<2;++ch) for(int i=0;i<256;++i) audio.setSample(ch,i,.2f*(float)std::sin(juce::MathConstants<double>::twoPi*55*(b*256+i)/48000));
+        p.processBlock(audio,midi);
+    };
+    for(int b=0;b<200;++b) block(b);
+    countAllocations=true; for(int b=200;b<400;++b) block(b); countAllocations=false;
+    require(realtimeAllocations.load()==0,"Steady-state processing called operator new on the audio thread");
+    auto file=juce::File::getCurrentWorkingDirectory().getNonexistentChildFile("loww-recall-test",".loww");
+    require(p.savePreset(file).wasOk() && p.openPreset(file).wasOk() && p.hostRestoreCount.load()==0,"Opening a user preset counted as host recall");
+    file.deleteFile();
+    juce::MemoryBlock data; p.applyFactoryPreset(4); p.getStateInformation(data);
+    p.setStateInformation(data.getData(),(int)data.getSize());
+    require(p.hostRestoreCount.load()==1 && p.presetName()=="Deep Edge","Host recall did not invalidate the editor's save target");
+    p.setStateInformation("junk",4); require(p.hostRestoreCount.load()==1,"Rejected host state counted as recall");
+    // Host restores may arrive off the message thread while the editor reads preset metadata.
+    std::atomic<bool> done {false};
+    std::thread host([&] { for(int i=0;i<200;++i) p.setStateInformation(data.getData(),(int)data.getSize()); done=true; });
+    bool consistent=true;
+    while(!done.load()) consistent=consistent && p.presetName()=="Deep Edge" && p.presetInfo().isNotEmpty() && p.cabinetName().isNotEmpty();
+    host.join(); require(consistent,"Metadata read raced host restore");
+    const int restores=p.hostRestoreCount.load();
+    auto stale=juce::File::getCurrentWorkingDirectory().getNonexistentChildFile("loww-stale-test",".loww");
+    require(p.savePreset(stale,restores-1).failed() && !stale.exists(),"Save overwrote a file after host recall");
+    require(p.savePreset(stale,restores).wasOk(),"Save with a current host generation failed"); stale.deleteFile();
+    std::cout << "PASS no operator new in steady-state processing, host recall tracking, concurrent metadata reads\n";
+}
 void writeWave(const juce::File& file,const juce::AudioBuffer<float>& buffer) {
     juce::WavAudioFormat format;
     auto stream=file.createOutputStream();
@@ -385,7 +487,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         if(argc==2 && juce::String(argv[1])=="--pitch") { testTransposeAndTuner(); return 0; }
-        testNeutralResponse(); testBypassAndChannels(); testTone(); testCabAndGate(); testStateAndStress(); testEmbeddedIR(); testNewVoicing(); testDualCab(); testTransposeAndTuner(); testPresetMigrationAndMidi();
+        testNeutralResponse(); testBypassAndChannels(); testTone(); testCabAndGate(); testStateAndStress(); testEmbeddedIR(); testNewVoicing(); testDualCab(); testTransposeAndTuner(); testPresetMigrationAndMidi(); testHostRecallAndRealtime(); testGateTransposeMonoAndPriming();
         std::cout << "All audio checks passed.\n"; return 0;
     } catch (const std::exception& error) { std::cerr << "FAIL: " << error.what() << '\n'; return 1; }
 }

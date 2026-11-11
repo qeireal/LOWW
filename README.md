@@ -35,7 +35,9 @@ See the [user guide](docs/user-guide.md) for controls, signal flow, preset handl
 
 ### Use a prebuilt app or plugin
 
-The repository includes [Apple Silicon packages](dist/) and unpacked bundles in [`dist/macOS/`](dist/macOS/). The builds are ad-hoc signed and are not notarized. macOS may require approval before opening them.
+Every commit on `main` is built by [GitHub Actions](https://github.com/qeireal/LOWW/actions/workflows/build.yml): open the latest run and download the archive for your platform from **Artifacts**. It holds a universal macOS build (Apple Silicon and Intel: app, VST3, AU), Windows x64 or Linux x64 (standalone and VST3). Artifacts are kept for 30 days. These CI builds are ad-hoc signed or unsigned and not notarized.
+
+The repository also includes [Apple Silicon packages](dist/) and unpacked bundles in [`dist/macOS/`](dist/macOS/). The builds are ad-hoc signed and are not notarized. macOS may require approval before opening them.
 
 | Format | Location | Use |
 | --- | --- | --- |
@@ -66,7 +68,7 @@ User presets live in `~/Documents/LOWW Presets/`. Imported cabinet IRs are embed
 
 Install Apple's tools with `xcode-select --install`. If you use Homebrew, install the build tools with `brew install cmake ninja`.
 
-The packaged binaries target Apple Silicon. The project sets a minimum macOS deployment target of 11.0; Windows and Linux builds have not been verified.
+The packaged binaries in `dist/` target Apple Silicon. The project sets a minimum macOS deployment target of 11.0. CI builds and tests Windows x64 and Linux x64 as well; those builds have not been tried in third-party hosts.
 
 ### Configure and compile
 

@@ -20,7 +20,7 @@ jobs:
       matrix:
         include:
           - name: macOS (Apple Silicon + Intel)
-            os: macos-14
+            os: macos-latest
             platform: macos-universal
             configure: -G Ninja -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
           - name: Windows x64

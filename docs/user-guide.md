@@ -33,7 +33,7 @@ The wet/dry branch shares the selected band topology and transpose. Whole-proces
 - **Transpose** spans −12 to +12 semitones using Signalsmith Stretch. At zero, the original low-latency audio path is retained. Nonzero settings add the library's analysis/synthesis latency, reported to the host and displayed beside the preset description while audio is running. This is an offline-verified pitch shifter, not a claim of Parallax's low-latency performance. Crossing zero changes latency; change tuning between takes rather than expecting a seamless pitch pedal.
 - **Live tuner** shows note, cents and frequency from the unprocessed input, calibrated to A=440 Hz. Play one note at a time. Its computation runs on the editor thread. It has no mute function or alternate reference calibration yet.
 - Standalone **Click**, **Tap**, BPM (30–300), and 1–12 beats per bar provide a quarter-note metronome with a first-beat accent. Metronome settings stay outside tone presets. These are not DAW-synchronised subdivisions or selectable accent samples.
-- The editor scales from 840×675 to 1680×1350. The standalone adds its audio-routing bar. Input/output peak meters and compression reduction are visible.
+- The editor scales from 1040×836 to 1680×1350, keeping its proportions; the minimum keeps all text at 11 px or larger. The standalone adds its audio-routing bar. Input/output peak meters and compression reduction are visible.
 
 ## Cabinet slots
 

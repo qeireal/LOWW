@@ -32,7 +32,7 @@ public:
         devices.addChangeListener(this);
         player.setProcessor(&processor);
         devices.addMidiInputDeviceCallback({}, &player.midiCollector());
-        setSize(1008,858);
+        setSize(1120,948);
     }
     ~StandaloneContent() override {
         if (deviceDialog != nullptr) delete deviceDialog.getComponent();
@@ -144,7 +144,7 @@ private:
         Window() : DocumentWindow("LOWW",juce::Colour(0xff111516),DocumentWindow::closeButton|DocumentWindow::minimiseButton) {
             setUsingNativeTitleBar(true);
             setContentOwned(new StandaloneContent(),true);
-            setResizable(true,false); setResizeLimits(840,723,1680,1398);
+            setResizable(true,false); setResizeLimits(1040,884,1680,1398);
             centreWithSize(getWidth(),getHeight());
             setVisible(true);
         }

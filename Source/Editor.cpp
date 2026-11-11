@@ -8,9 +8,10 @@ namespace {
 // Neumorphism: every surface shares one grey and is lifted or pressed by a white/slate shadow pair.
 const juce::Colour background {0xff2c3038}, well {0xff262a31}, line {0xff3b414b};
 const juce::Colour highlight {0xff3c424d}, shade {0xff131519};
-const juce::Colour ink {0xffe6e9ee}, muted {0xff8b94a3}, onAccent {0xff0d1a1f};
+const juce::Colour ink {0xffe6e9ee}, muted {0xff9ea7b6}, onAccent {0xff0d1a1f};
 const juce::Colour cyan {0xff22ecff}, cyanDeep {0xff00b3cc}, slate {0xffa3aebd}, clip {0xffff6b7a};
-const juce::Colour lowTone {0xff0a93a8}; const juce::Colour midTone = cyan, highTone = slate;
+// Band hues stay distinct from each other and from the white sum curve, and all pass 4.5:1 on the panels.
+const juce::Colour lowTone {0xff12bfd8}, midTone = cyan, highTone {0xff8fa6ff};
 // Open Runde, embedded. Fonts are built from these typefaces directly because JUCE resolves
 // default fonts through the process-wide LookAndFeel, which a plugin shouldn't take over.
 enum class Weight { regular, medium, semibold, bold };
@@ -44,7 +45,7 @@ inline R span(int first, int count, int y, int h) {
 const R inputs = span(0,2,84,160), centre = span(2,4,84,160), outputs = span(6,2,84,160);
 const R graphWell = span(0,8,260,124);
 const R bands[3] {span(0,3,400,164), span(3,2,400,164), span(5,3,400,164)};
-const R eq = span(0,4,580,124), cabinet = span(4,4,580,124);
+const R eq = span(0,5,580,124), cabinet = span(5,3,580,124);
 const R cabs[2] {span(0,4,720,136), span(4,4,720,136)};
 const juce::Rectangle<float> graph = graphWell.toFloat().reduced(12,4);
 }
@@ -60,6 +61,11 @@ void softShadow(juce::Graphics& g, juce::Rectangle<float> r, float radius, juce:
         wall.addRoundedRectangle(hole, juce::jmax(0.f, radius - e * .5f)); wall.setUsingNonZeroWinding(false);
         g.fillPath(wall);
     }
+}
+// Keyboard focus ring shared by every custom-drawn control.
+void focusRing(juce::Graphics& g, juce::Component& c, juce::Rectangle<float> r, float radius) {
+    if (!c.hasKeyboardFocus(true)) return;
+    g.setColour(cyan); g.drawRoundedRectangle(r.expanded(2), radius + 2, 2);
 }
 void raised(juce::Graphics& g, juce::Rectangle<float> r, float radius, float depth, juce::Colour face = background) {
     softShadow(g, r, radius, {depth, depth}, shade.withAlpha(.7f), depth * 2.6f, false);
@@ -118,15 +124,19 @@ void LOWWEditor::Theme::drawRotarySlider(juce::Graphics& g, int x, int y, int w,
     const auto radius = juce::jmin(area.getWidth(), area.getHeight()) * .5f;
     const auto centre = area.getCentre();
     const auto angle = start + pos * (end - start);
-    const auto colour = slider.findColour(juce::Slider::rotarySliderFillColourId);
+    // A switched-off stage dims only the value graphics; labels, values and focus keep full contrast.
+    const auto dimmed = (bool) slider.getProperties()["dimmed"];
+    const auto colour = slider.findColour(juce::Slider::rotarySliderFillColourId).withMultipliedAlpha(dimmed ? .35f : 1.f);
     // Pressed well holding the value arc, with a raised knob sitting in it.
     inset(g, juce::Rectangle<float>(radius * 2, radius * 2).withCentre(centre), radius, 2.5f);
     const auto arcRadius = radius - 5.5f;
     juce::Path ring;
     ring.addCentredArc(centre.x, centre.y, arcRadius, arcRadius, 0, start, end, true);
     g.setColour(line); g.strokePath(ring, juce::PathStrokeType(3.f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    // Bipolar ranges (pan, transpose) fill from their zero point, like the EQ sliders.
+    const auto origin = slider.getMinimum() == -slider.getMaximum() ? start + (float) slider.valueToProportionOfLength(0.0) * (end - start) : start;
     juce::Path active;
-    active.addCentredArc(centre.x, centre.y, arcRadius, arcRadius, 0, start, angle, true);
+    active.addCentredArc(centre.x, centre.y, arcRadius, arcRadius, 0, juce::jmin(origin, angle), juce::jmax(origin, angle), true);
     g.setColour(colour.withAlpha(.22f)); g.strokePath(active, juce::PathStrokeType(7.f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     g.setColour(colour); g.strokePath(active, juce::PathStrokeType(3.f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     const auto knob = radius - 11.f;
@@ -134,6 +144,7 @@ void LOWWEditor::Theme::drawRotarySlider(juce::Graphics& g, int x, int y, int w,
     const juce::Point<float> dot {centre.x + std::sin(angle) * knob * .62f, centre.y - std::cos(angle) * knob * .62f};
     g.setColour(colour.withAlpha(.3f)); g.fillEllipse(juce::Rectangle<float>(9, 9).withCentre(dot));
     g.setColour(colour); g.fillEllipse(juce::Rectangle<float>(5, 5).withCentre(dot));
+    focusRing(g, slider, juce::Rectangle<float>(radius * 2, radius * 2).withCentre(centre), radius);
 }
 void LOWWEditor::Theme::drawLinearSlider(juce::Graphics& g, int x, int y, int w, int h, float pos, float minPos, float maxPos,
                                             juce::Slider::SliderStyle style, juce::Slider& slider) {
@@ -143,11 +154,12 @@ void LOWWEditor::Theme::drawLinearSlider(juce::Graphics& g, int x, int y, int w,
     inset(g, track, 3.5f, 1.5f);
     const auto zero = juce::jlimit(track.getY(), track.getBottom(), (float) slider.getPositionOfValue(0.0));
     const auto from = juce::jmin(zero, pos), to = juce::jmax(zero, pos);
-    const auto colour = slider.findColour(juce::Slider::trackColourId);
+    const auto colour = slider.findColour(juce::Slider::trackColourId).withMultipliedAlpha((bool) slider.getProperties()["dimmed"] ? .35f : 1.f);
     g.setColour(colour); g.fillRoundedRectangle(track.reduced(1.5f, 0).withY(from).withBottom(to), 2);
     const auto thumb = juce::Rectangle<float>(13, 13).withCentre({bounds.getCentreX(), pos});
     raised(g, thumb, 6.5f, 1.5f);
     g.setColour(colour); g.fillEllipse(thumb.withSizeKeepingCentre(5, 5));
+    focusRing(g, slider, track.expanded(5, 2), 6);
 }
 void LOWWEditor::Theme::drawButtonBackground(juce::Graphics& g, juce::Button& button, const juce::Colour&,
                                                 bool highlighted, bool down) {
@@ -157,13 +169,14 @@ void LOWWEditor::Theme::drawButtonBackground(juce::Graphics& g, juce::Button& bu
     const auto radius = juce::jmin(10.f, r.getHeight() * .4f);
     if (down || button.getToggleState()) inset(g, r, radius, depth);
     else raised(g, r, radius, highlighted ? depth * 1.3f : depth);
+    focusRing(g, button, r, radius);
 }
 void LOWWEditor::Theme::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button, bool highlighted, bool down) {
     const auto h = (float) button.getHeight();
     const auto size = juce::jmin(18.f, h * .75f);
     const auto box = juce::Rectangle<float>(4, (h - size) * .5f, size, size);
     if (button.getToggleState()) {
-        raised(g, box, 5, 1.5f, cyan);
+        raised(g, box, 5, 1.5f, button.findColour(juce::ToggleButton::tickColourId));
         juce::Path tick;
         tick.startNewSubPath(box.getX() + size * .26f, box.getCentreY());
         tick.lineTo(box.getX() + size * .44f, box.getY() + size * .7f);
@@ -172,8 +185,10 @@ void LOWWEditor::Theme::drawToggleButton(juce::Graphics& g, juce::ToggleButton& 
         g.strokePath(tick, juce::PathStrokeType(2.f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     } else {
         inset(g, box, 5, down ? 2.f : 1.5f);
-        if (highlighted) { g.setColour(cyan.withAlpha(.5f)); g.drawRoundedRectangle(box, 5, 1); }
+        // A visible boundary keeps unchecked boxes findable (about 3:1 against the well).
+        g.setColour(highlighted ? cyan.withAlpha(.7f) : muted.withAlpha(.6f)); g.drawRoundedRectangle(box, 5, 1);
     }
+    focusRing(g, button, box, 5);
     g.setColour(button.findColour(juce::ToggleButton::textColourId).withMultipliedAlpha(button.isEnabled() ? 1.f : .5f));
     g.setFont(uiFont(14.f, Weight::medium));
     g.drawFittedText(button.getButtonText(), button.getLocalBounds().withTrimmedLeft(juce::roundToInt(size) + 10).withTrimmedRight(2),
@@ -187,6 +202,7 @@ void LOWWEditor::Theme::drawComboBox(juce::Graphics& g, int w, int h, bool, int,
     chevron.startNewSubPath(arrow.getX(), arrow.getY()); chevron.lineTo(arrow.getCentreX(), arrow.getBottom()); chevron.lineTo(arrow.getRight(), arrow.getY());
     g.setColour(box.findColour(juce::ComboBox::arrowColourId).withMultipliedAlpha(box.isEnabled() ? 1.f : .4f));
     g.strokePath(chevron, juce::PathStrokeType(2.f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    focusRing(g, box, r, juce::jmin(10.f, r.getHeight() * .4f));
 }
 juce::Font LOWWEditor::Theme::getTextButtonFont(juce::TextButton&, int height) {
     return uiFont(juce::jlimit(13.f, 15.f, (float) height * .5f), Weight::semibold);
@@ -206,7 +222,7 @@ LOWWEditor::Dial::Dial(LOWWProcessor& p, const char* id, const juce::String& tit
                           juce::Colour colour, bool vertical) {
     label.setText(title, juce::dontSendNotification);
     label.setJustificationType(juce::Justification::centred);
-    label.setFont(uiFont(11.f, Weight::semibold, .08f));
+    label.setFont(uiFont(12.f, Weight::semibold, .08f));
     slider.setSliderStyle(vertical ? juce::Slider::LinearVertical : juce::Slider::RotaryHorizontalVerticalDrag);
     slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 84, 22);
     slider.setColour(juce::Slider::rotarySliderFillColourId, colour);
@@ -217,7 +233,8 @@ LOWWEditor::Dial::Dial(LOWWProcessor& p, const char* id, const juce::String& tit
     const auto unit = parameter->getLabel();
     slider.setDoubleClickReturnValue(true, parameter->convertFrom0to1(parameter->getDefaultValue()));
     slider.setTitle(parameter->getName(100));
-    slider.setTooltip("Drag to adjust. Double-click to reset. Type a value. Right-click for MIDI learn.");
+    slider.setWantsKeyboardFocus(true);
+    slider.setTooltip("Drag to adjust. Double-click to reset. Click the value or press Return to type one. Right-click for MIDI learn.");
     slider.menu = [&p, parameterId = juce::String(id), safe = juce::Component::SafePointer<Dial>(this)] {
         juce::PopupMenu menu; menu.addItem(1, "Learn next MIDI CC"); menu.addItem(2, "Clear MIDI mapping");
         menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(safe.getComponent()), [&p, parameterId, safe](int result) {
@@ -231,7 +248,7 @@ LOWWEditor::Dial::Dial(LOWWProcessor& p, const char* id, const juce::String& tit
     slider.textFromValueFunction = [unit, vertical](double value) {
         if (std::abs(value) < .005) value = 0;
         const auto number = unit == "dB" ? juce::String(value, 1) : juce::String(juce::roundToInt(value));
-        return number + (vertical || unit.isEmpty() ? "" : " " + unit);
+        return number + (unit.isEmpty() ? "" : " " + unit);
     };
     slider.valueFromTextFunction = [](const juce::String& v) { return v.getDoubleValue(); };
     slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
@@ -251,33 +268,36 @@ LOWWEditor::LOWWEditor(LOWWProcessor& p) : AudioProcessorEditor(p), owner(p), se
     add("input","INPUT",cyan); add("gate","GATE",cyan); add("mix","WET / DRY",cyan); add("output","OUTPUT",cyan);
     add("compression","COMPRESS",lowTone); add("lowCut","LOW PASS",lowTone); add("lowLevel","LEVEL",lowTone);
     add("midDrive","DRIVE",midTone); add("midLevel","LEVEL",midTone);
-    add("highDrive","DRIVE",highTone); add("highCut","CROSSOVER",highTone); add("highLevel","LEVEL",highTone);
+    add("highDrive","DRIVE",highTone); add("highCut","HIGH PASS",highTone); add("highLevel","LEVEL",highTone);
     const char* labels[] {"80","250","500","1k","1.5k","5k"};
     for(int i=0;i<6;++i) add(("eq"+juce::String(i)).toRawUTF8(),labels[i],cyan,true);
     add("transpose","TRANSPOSE",cyan); add("parallelHigh","HIGH PASS",highTone);
     add("cab0Level","LEVEL",cyan); add("cab0Pan","PAN",cyan);
-    add("cab1Level","LEVEL",highTone); add("cab1Pan","PAN",highTone);
+    add("cab1Level","LEVEL",cyan); add("cab1Pan","PAN",cyan);
     add("parallelLow","LOW PASS",lowTone);
     auto toggle = [&](const char* id,const char* title) {
         auto button = std::make_unique<juce::ToggleButton>(title); addAndMakeVisible(*button);
+        button->setTitle(p.state.getParameter(id)->getName(100));
         switchAttachments.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(p.state,id,*button));
         switches.push_back(std::move(button));
     };
-    toggle("gateOn","Gate"); toggle("bypass","Bypass"); toggle("lowOn","On"); toggle("midOn","On"); toggle("highOn","On");
+    // Band switches bypass only the band's compressor or drive; the band itself stays audible.
+    toggle("gateOn","On"); toggle("bypass","Bypass"); toggle("lowOn","Comp"); toggle("midOn","Drive"); toggle("highOn","Drive");
     toggle("eqOn","EQ"); toggle("cabOn","Cabinet"); toggle("parallel","Parallel voicing"); toggle("monoLow","Mono lows");
     toggle("cab0Enabled","On"); toggle("cab0Phase","Invert phase"); toggle("cab1Enabled","On"); toggle("cab1Phase","Invert phase");
+    switches[1]->setColour(juce::ToggleButton::tickColourId, clip);
     switches[7]->setTooltip("Parallel: independent low/high filters, fixed 400 Hz mids, 3 ms / 600 ms / 4:1 compression, shelf EQ. Off: original LOWW crossovers and bell EQ.");
     presets.setTextWhenNothingSelected(owner.presetName()); refreshPresets();
     presets.onChange = [this] {
         const int id = presets.getSelectedId();
         if (id > 0 && id <= LOWWProcessor::presetNames().size()) {
             currentFactory = id-1; currentFile = juce::File(); owner.applyFactoryPreset(currentFactory);
-            status.setText("Factory tone loaded; current cabinet settings retained",juce::dontSendNotification);
+            setStatus("Factory tone loaded; current cabinet settings retained");
         } else if (id >= 100 && id-100 < userPresets.size()) {
             const auto file = userPresets[id-100];
             const auto result = owner.openPreset(file);
             if (result.wasOk()) { currentFile = file; currentFactory = -1; }
-            status.setText(result.wasOk() ? "Preset opened" : result.getErrorMessage(),juce::dontSendNotification);
+            setStatus(result,"Preset opened");
         }
     };
     previous.onClick = [this] { stepPreset(-1); }; next.onClick = [this] { stepPreset(1); };
@@ -286,7 +306,7 @@ LOWWEditor::LOWWEditor(LOWWProcessor& p) : AudioProcessorEditor(p), owner(p), se
         forgetFileAfterHostRestore();
         if (currentFile == juce::File()) { presetFile(true); return; }
         const auto result = owner.savePreset(currentFile, seenHostRestores);
-        status.setText(result.wasOk() ? "Preset saved" : result.getErrorMessage(),juce::dontSendNotification);
+        setStatus(result,"Preset saved");
     };
     folder.onClick = [this] {
         juce::PopupMenu menu; menu.addItem(1,"Refresh library"); menu.addItem(2,"Open preset folder"); menu.addItem(3,"Reset tone to Foundation");
@@ -296,25 +316,29 @@ LOWWEditor::LOWWEditor(LOWWProcessor& p) : AudioProcessorEditor(p), owner(p), se
             if(choice==1) { safe->refreshPresets(); return; }
             if(choice==3) { safe->owner.applyFactoryPreset(0); safe->currentFactory=0; safe->currentFile=juce::File(); return; }
             if(choice==4) {
-                if(safe->currentFile.moveToTrash()) { safe->currentFile=juce::File(); safe->refreshPresets(); safe->status.setText("Preset moved to Trash; current tone retained",juce::dontSendNotification); }
-                else safe->status.setText("Could not move preset to Trash",juce::dontSendNotification);
+                if(safe->currentFile.moveToTrash()) { safe->currentFile=juce::File(); safe->refreshPresets(); safe->setStatus("Preset moved to Trash; current tone retained"); }
+                else safe->setStatus("Could not move preset to Trash",Tone::error);
                 return;
             }
             if(choice!=2) return;
             const auto dir = LOWWProcessor::presetFolder(); const auto result = dir.createDirectory();
-        if (result.wasOk()) dir.revealToUser(); else safe->status.setText(result.getErrorMessage(),juce::dontSendNotification);
+        if (result.wasOk()) dir.revealToUser(); else safe->setStatus(result.getErrorMessage(),Tone::error);
         });
     };
     for (int i=0;i<2;++i) {
         loadCab[(size_t)i].setButtonText("Load IR..."); stockCab[(size_t)i].setButtonText("Stock");
+        const juce::String slotName = i == 0 ? "A" : "B";
+        loadCab[(size_t)i].setTitle("Load IR for cabinet " + slotName); stockCab[(size_t)i].setTitle("Use stock IR for cabinet " + slotName);
         loadCab[(size_t)i].onClick = [this,i] { chooseIR(i); };
         stockCab[(size_t)i].onClick = [this,i] { showResult(owner.restoreStockCab(i)); };
         addAndMakeVisible(loadCab[(size_t)i]); addAndMakeVisible(stockCab[(size_t)i]);
     }
     for(auto* c : std::initializer_list<juce::Component*> {&presets,&save,&load,&previous,&next,&overwrite,&folder,&status,&analyser,&tuner,&tunerLabel,&presetInfo}) addAndMakeVisible(c);
     analyser.setToggleState(true,juce::dontSendNotification);
-    tunerLabel.setText("Tuner off",juce::dontSendNotification); tunerLabel.setFont(uiFont(20.f, Weight::semibold));
-    tuner.onClick = [this] { if (!tuner.getToggleState()) tunerLabel.setText("Tuner off",juce::dontSendNotification); };
+    previous.setTitle("Previous preset"); next.setTitle("Next preset"); presets.setTitle("Preset");
+    bpm.setTitle("Metronome tempo"); bpm.setWantsKeyboardFocus(true); timeSignature.setTitle("Metronome time signature"); tap.setTitle("Tap tempo");
+    setTuner({},muted); tunerLabel.setFont(uiFont(20.f, Weight::semibold));
+    tuner.onClick = [this] { if(tuner.getToggleState()) setTuner("Play a single note",ink); else setTuner({},muted); };
     if (owner.standalone) {
         addAndMakeVisible(metronome); addAndMakeVisible(bpm); addAndMakeVisible(timeSignature); addAndMakeVisible(tap);
         tap.onClick = [this] {
@@ -329,12 +353,18 @@ LOWWEditor::LOWWEditor(LOWWProcessor& p) : AudioProcessorEditor(p), owner(p), se
         for(int i=1;i<=12;++i) timeSignature.addItem(juce::String(i)+"/4",i);
         timeSignature.setSelectedId(owner.beatsPerBar.load(),juce::dontSendNotification); timeSignature.onChange = [this] { owner.beatsPerBar.store(timeSignature.getSelectedId()); };
     }
-    status.setText("Right-click a dial for MIDI learn. Drag L / M / H in the graph.",juce::dontSendNotification);
-    status.setFont(uiFont(11.5f)); presetInfo.setFont(uiFont(11.5f));
-    setResizable(true,true); setResizeLimits(840,675,1680,1350);
+    setStatus("Right-click a dial for MIDI learn. Drag L / M / H in the graph.",Tone::hint);
+    status.setFont(uiFont(12.f)); presetInfo.setFont(uiFont(12.f));
+    // Clicks don't take keyboard focus: the focus ring then marks only Tab navigation, and DAW shortcuts keep working.
+    for(auto* child : getChildren()) child->setMouseClickGrabsKeyboardFocus(false);
+    for(auto& dial : dials) dial->slider.setMouseClickGrabsKeyboardFocus(false);
+    // A keyboard focus container wraps Tab within the controls, so the editor itself is never an invisible stop.
+    setTitle("LOWW editor"); setWantsKeyboardFocus(true); setFocusContainerType(FocusContainerType::keyboardFocusContainer); addMouseListener(&clickUnfocus,true);
+    setResizable(true,true); setResizeLimits(1040,836,1680,1350);
+    if(auto* constrainer=getConstrainer()) constrainer->setFixedAspectRatio(1120.0/900.0);
     setSize(1120,900); timerCallback(); startTimerHz(30);
 }
-LOWWEditor::~LOWWEditor() { stopTimer(); setLookAndFeel(nullptr); }
+LOWWEditor::~LOWWEditor() { removeMouseListener(&clickUnfocus); stopTimer(); setLookAndFeel(nullptr); }
 void LOWWEditor::refreshPresets() {
     presets.clear(juce::dontSendNotification);
     presets.addSectionHeading("LOWW originals");
@@ -359,6 +389,8 @@ void LOWWEditor::stepPreset(int direction) {
 void LOWWEditor::resized() {
     using namespace layout;
     uiScale = juce::jmin((float)getWidth()/1120.f,(float)getHeight()/900.f);
+    // Centre the scaled layout when the host window's aspect ratio differs from the design.
+    uiOffset = {((float)getWidth()-1120.f*uiScale)*.5f, ((float)getHeight()-900.f*uiScale)*.5f};
     for(auto* child : getChildren()) child->setTransform(juce::AffineTransform());
     // Header
     // Header: preset strip starts on the centre panel's column line and ends on the right margin.
@@ -371,72 +403,88 @@ void LOWWEditor::resized() {
         for(auto* c : items) { c->setBounds(x,y,w,h); x+=w+gap; }
     };
     row(inputs,92,120,{dials[0].get(),dials[1].get(),dials[18].get()},80,4);
-    switches[0]->setBounds(dials[1]->getX()+8,214,70,22);
+    switches[0]->setBounds(dials[1]->getX()+15,212,70,30);
     row(outputs,92,120,{dials[2].get(),dials[3].get()},100,8);
     // Centre: voicing toggles, tuner, meters, transport, all inside 16 px padding.
     const int cx=centre.getX()+16, cr=centre.getRight()-16;
-    switches[7]->setBounds(cx,96,160,26); switches[8]->setBounds(cx+184,96,120,26); analyser.setBounds(cx+328,96,120,26);
-    tunerLabel.setBounds(cx,124,cr-cx,32);
-    tuner.setBounds(cx,204,110,26); metronome.setBounds(cx+122,204,72,26);
-    tap.setBounds(cr-42,204,42,26); timeSignature.setBounds(cr-122,204,72,26); bpm.setBounds(cr-262,204,130,26);
+    switches[7]->setBounds(cx,94,160,30); switches[8]->setBounds(cx+184,94,120,30); analyser.setBounds(cx+328,94,120,30);
+    // Meters, then the tuner reading directly above the switch that drives it.
+    tunerLabel.setBounds(cx,160,cr-cx,32);
+    tuner.setBounds(cx,198,110,32); metronome.setBounds(cx+122,198,72,32);
+    tap.setBounds(cr-52,200,52,30); timeSignature.setBounds(cr-132,200,72,30); bpm.setBounds(cr-292,200,150,30);
     // Bands: title row, then centred dials; the parallel/original filter dials share a slot.
     juce::Component* const low[] {dials[4].get(),dials[5].get(),dials[6].get()}, * const high[] {dials[9].get(),dials[10].get(),dials[11].get()};
     row(bands[0],bands[0].getY()+36,122,{low[0],low[1],low[2]},104,8); dials[24]->setBounds(dials[5]->getBounds());
     row(bands[1],bands[1].getY()+36,122,{dials[7].get(),dials[8].get()},104,8);
     row(bands[2],bands[2].getY()+36,122,{high[0],high[1],high[2]},104,8); dials[19]->setBounds(dials[10]->getBounds());
-    for(int i=0;i<3;++i) switches[(size_t)i+2]->setBounds(bands[i].getRight()-76,bands[i].getY()+12,60,24);
+    for(int i=0;i<3;++i) switches[(size_t)i+2]->setBounds(bands[i].getRight()-90,bands[i].getY()+8,74,32);
     // EQ + cabinet
-    switches[5]->setBounds(eq.getX()+16,eq.getCentreY()-12,64,24);
-    for(int i=0;i<6;++i) dials[(size_t)i+12]->setBounds(eq.getRight()-16-58-(5-i)*72,eq.getY()+6,58,112);
-    switches[6]->setBounds(cabinet.getX()+16,cabinet.getY()+12,120,24);
+    switches[5]->setBounds(eq.getX()+16,eq.getCentreY()-16,64,32);
+    for(int i=0;i<6;++i) dials[(size_t)i+12]->setBounds(eq.getRight()-16-80-(5-i)*92,eq.getY()+6,80,112);
+    switches[6]->setBounds(cabinet.getX()+16,cabinet.getY()+8,120,32);
     // Cabinet slots
     for(size_t slot=0;slot<2;++slot) {
         const auto c=cabs[slot];
-        switches[9+slot*2]->setBounds(c.getX()+16,c.getY()+12,60,24); switches[10+slot*2]->setBounds(c.getX()+88,c.getY()+12,130,24);
+        switches[9+slot*2]->setBounds(c.getX()+16,c.getY()+8,60,32); switches[10+slot*2]->setBounds(c.getX()+88,c.getY()+8,130,32);
         loadCab[slot].setBounds(c.getX()+14,c.getY()+90,100,34); stockCab[slot].setBounds(c.getX()+120,c.getY()+90,76,34);
         dials[20+slot*2]->setBounds(c.getRight()-224,c.getY()+8,100,122); dials[21+slot*2]->setBounds(c.getRight()-116,c.getY()+8,100,122);
     }
     status.setBounds(24,866,1072,20);
-    const auto transform = juce::AffineTransform::scale(uiScale);
+    const auto transform = juce::AffineTransform::scale(uiScale).translated(uiOffset);
     for(auto* child : getChildren()) {
         if (auto* corner = dynamic_cast<juce::ResizableCornerComponent*>(child)) { corner->setBounds(getWidth()-18,getHeight()-18,18,18); continue; }
+        // JUCE positions tooltips from the already-scaled mouse point, so the tooltip window stays unscaled.
+        if (child == &tooltips) continue;
         child->setTransform(transform);
     }
 }
 void LOWWEditor::drawMeter(juce::Graphics& g,juce::Rectangle<float> r,float gain,const juce::String& title) {
     const auto db=juce::Decibels::gainToDecibels(gain,-80.f);
-    text(g,title+"  "+(db<=-79 ? "-inf" : juce::String(db,1))+" dB",r.removeFromTop(16),10.5f,muted,Weight::medium,.06f);
+    const auto labels=r.removeFromTop(14);
+    text(g,title+"  "+(db<=-79 ? "-inf" : juce::String(db,1))+" dB",labels,12.f,muted,Weight::medium,.06f);
     inset(g,r,r.getHeight()*.5f,1.5f);
-    const auto fill=r.reduced(1.5f).withWidth((r.getWidth()-3)*juce::jlimit(0.f,1.f,(db+60)/60));
-    if(fill.getWidth()<1) return;
-    g.setGradientFill(juce::ColourGradient(cyanDeep,fill.getTopLeft(),db>=0 ? clip : cyan,fill.getTopRight(),false));
-    g.fillRoundedRectangle(fill,fill.getHeight()*.5f);
+    // -60..0 dBFS across the track, inset so the 0 mark clears the rounded end.
+    const auto xFor=[&](float level) { return r.getX()+4+(r.getWidth()-8)*juce::jlimit(0.f,1.f,(level+60)/60); };
+    const auto fill=r.reduced(1.5f).withRight(xFor(db));
+    if(db>-60 && fill.getWidth()>=1) {
+        g.setGradientFill(juce::ColourGradient(cyanDeep,fill.getTopLeft(),db>=0 ? clip : cyan,fill.getTopRight(),false));
+        g.fillRoundedRectangle(fill,fill.getHeight()*.5f);
+    }
+    // Labelled level marks at -18, -12, -6 and 0 dBFS, numbers centred over their ticks.
+    g.setFont(uiFont(12.f,Weight::medium));
+    for(const float mark : {-18.f,-12.f,-6.f,0.f}) {
+        const auto x=xFor(mark);
+        g.setColour(ink.withAlpha(.45f)); g.drawVerticalLine((int)x,r.getY()+2,r.getBottom()-2);
+        g.setColour(muted); g.drawText(juce::String((int)mark),juce::Rectangle<float>(x-14,labels.getY(),28,labels.getHeight()),juce::Justification::centred);
+    }
 }
 void LOWWEditor::paint(juce::Graphics& g) {
     using namespace layout;
-    g.fillAll(background); g.addTransform(juce::AffineTransform::scale(uiScale));
+    g.fillAll(background); g.addTransform(juce::AffineTransform::scale(uiScale).translated(uiOffset));
     // Brand: the mark on a raised tile, wordmark beside it.
     const juce::Rectangle<float> mark {24,12,44,44};
     raised(g,mark,11,3); loww::drawLogoMark(g,mark,false);
-    text(g,"LOWW",{80,11,190,30},28,ink,Weight::bold,.04f); text(g,"PARALLEL BASS",{81,39,190,16},9.5f,cyan,Weight::semibold,.2f);
+    text(g,"LOWW",{80,11,190,30},28,ink,Weight::bold,.04f); text(g,"PARALLEL BASS",{81,39,190,16},12.f,cyan,Weight::semibold,.16f);
     for(auto panel : {inputs,centre,outputs,eq,cabinet,cabs[0],cabs[1]}) raised(g,panel.toFloat(),16,5);
     const float meterWidth=((float)centre.getWidth()-48)*.5f, mx=(float)centre.getX()+16;
-    drawMeter(g,{mx,162,meterWidth,24},owner.inputMeter.load(),"IN"); drawMeter(g,{mx+meterWidth+16,162,meterWidth,24},owner.outputMeter.load(),"OUT");
+    drawMeter(g,{mx,128,meterWidth,26},owner.inputMeter.load(),"IN"); drawMeter(g,{mx+meterWidth+16,128,meterWidth,26},owner.outputMeter.load(),"OUT");
     drawGraph(g,graph);
+    // The BPM field's inc/dec style bypasses the slider painters, so its focus ring is drawn here.
+    if(bpm.isVisible() && bpm.hasKeyboardFocus(true)) { g.setColour(cyan); g.drawRoundedRectangle(bpm.getBounds().toFloat().expanded(2),8,2); }
     const juce::Colour colours[] {lowTone,midTone,highTone}; const char* titles[] {"LOW FOUNDATION","MID TEXTURE","HIGH EDGE"};
     for(int i=0;i<3;++i) {
         const auto b=bands[i].toFloat(); raised(g,b,16,5);
         g.setColour(colours[i]); g.fillEllipse(b.getX()+16,b.getY()+20,8,8);
         text(g,titles[i],{b.getX()+30,b.getY()+12,220,24},12,colours[i],Weight::bold,.1f);
     }
+    // Gain reduction sits with the compressor it measures.
+    const auto reduction=std::abs(owner.compressionMeter.load());
+    text(g,"GR  "+(reduction<.05f ? juce::String("0.0") : juce::String(-reduction,1))+" dB",{(float)bands[0].getX()+176,(float)bands[0].getY()+12,100,24},12,lowTone,Weight::semibold);
+    text(g,"A + B in parallel, mids and highs only",{(float)cabinet.getX()+150,(float)cabinet.getY()+14,236,20},12,muted,Weight::medium);
     const auto s=owner.settings();
-    const float cx=(float)cabinet.getX()+18;
-    text(g,s.parallel ? "100 Hz / 5 kHz shelves + four mid bands" : "Six bell filters / original voicing",{cx,(float)cabinet.getY()+52,480,20},13,ink,Weight::medium);
-    text(g,"Compression reduction  "+juce::String(owner.compressionMeter.load(),1)+" dB",{cx,(float)cabinet.getY()+80,480,20},12,cyan,Weight::medium);
     for(size_t i=0;i<2;++i) {
         const auto c=cabs[i].toFloat();
-        text(g,juce::String(i==0 ? "A  /  " : "B  /  ")+owner.cabinetName((int)i),{c.getX()+16,c.getY()+42,270,24},14.5f,ink,Weight::semibold);
-        text(g,"Mid + high only",{c.getX()+16,c.getY()+64,270,18},11,muted);
+        text(g,juce::String(i==0 ? "A  /  " : "B  /  ")+owner.cabinetName((int)i),{c.getX()+16,c.getY()+48,270,24},14.5f,s.cabOn && s.cabEnabled[i] ? ink : muted,Weight::semibold);
     }
 }
 void LOWWEditor::drawGraph(juce::Graphics& g,juce::Rectangle<float> r) {
@@ -444,9 +492,16 @@ void LOWWEditor::drawGraph(juce::Graphics& g,juce::Rectangle<float> r) {
     const auto s=owner.settings();
     inset(g,layout::graphWell.toFloat(),16,4);
     for(float f : {20.f,50.f,100.f,200.f,500.f,1000.f,2000.f,5000.f,10000.f,20000.f}) {
-        const auto x=xFor(f); g.setColour(line); g.drawVerticalLine((int)x,r.getY(),r.getBottom()-18);
-        text(g,f>=1000 ? juce::String(f/1000,0)+"k" : juce::String(f,0),{juce::jlimit(r.getX(),r.getRight()-40,x-16),r.getBottom()-18,40,18},10,muted,Weight::medium);
+        // Grid and band guides start below the caption row so they never cut through its text.
+        const auto x=xFor(f); g.setColour(line); g.drawVerticalLine((int)x,r.getY()+16,r.getBottom()-18);
+        g.setColour(muted); g.setFont(uiFont(12.f,Weight::medium));
+        g.drawText(f>=1000 ? juce::String(f/1000,0)+"k" : juce::String(f,0),juce::Rectangle<float>(juce::jlimit(r.getX(),r.getRight()-40,x-20),r.getBottom()-18,40,18),
+                   x-20<r.getX() ? juce::Justification::centredLeft : x+20>r.getRight() ? juce::Justification::centredRight : juce::Justification::centred);
     }
+    // Unity reference for the band levels.
+    const float unity=r.getY()+14+12.f/48*(r.getHeight()-48);
+    g.setColour(line.brighter(.25f)); g.drawHorizontalLine((int)unity,r.getX(),r.getRight());
+    text(g,"0 dB",{r.getRight()-38,unity-16,38,15},12.f,muted,Weight::semibold);
     // Static band-filter response at the DSP's oversampled rate, including band levels.
     // Compression, saturation, cabinet and EQ are deliberately excluded from this guide.
     using Complex = std::complex<double>;
@@ -496,29 +551,30 @@ void LOWWEditor::drawGraph(juce::Graphics& g,juce::Rectangle<float> r) {
         g.setColour(curveColours[band].withAlpha(.9f)); g.strokePath(curves[band],juce::PathStrokeType(1.5f));
     }
     g.setColour(ink.withAlpha(.85f)); g.strokePath(sum,juce::PathStrokeType(2.f));
-    text(g,"BAND FILTERS + LEVELS",{r.getX()+8,r.getY()+1,200,13},9,muted,Weight::semibold,.12f);
+    text(g,"BAND CROSSOVERS + LEVELS ONLY: NO DRIVE, CABINETS OR EQ",{r.getX()+8,r.getY()+1,520,15},12.f,muted,Weight::semibold,.08f);
     if(analyser.getToggleState()) {
         juce::Path path;
         for(int px=0;px<(int)r.getWidth();++px) {
             const auto f=20.f*std::pow(1000.f,(float)px/r.getWidth());
             const auto bin=juce::jlimit(1,1023,juce::roundToInt(f*2048/owner.currentRate.load()));
             const auto db=juce::Decibels::gainToDecibels(spectrum[(size_t)bin],-90.f);
-            const auto y=r.getBottom()-20-juce::jlimit(0.f,1.f,(db+90)/90)*(r.getHeight()-30);
+            // Same dB axis as the curves, so the 0 dB line reads for both.
+            const auto y=juce::jlimit(r.getY()+3,r.getBottom()-20,r.getY()+14+(12-db)/48*(r.getHeight()-48));
             if(px==0) path.startNewSubPath(r.getX(),y); else path.lineTo(r.getX()+(float)px,y);
         }
-        g.setColour(muted.withAlpha(.6f)); g.strokePath(path,juce::PathStrokeType(1.2f));
+        g.setColour(ink.withAlpha(.5f)); g.strokePath(path,juce::PathStrokeType(1.2f));
     }
     const float hz[] {s.lowCut,s.parallel ? 400.f : std::sqrt(s.lowCut*s.highCut),s.highCut};
     const float levels[] {s.lowLevel,s.midLevel,s.highLevel}; const juce::Colour colors[] {lowTone,midTone,highTone};
     for(int i=0;i<3;++i) {
         const float x=xFor(hz[i]), y=r.getY()+14+(12-levels[i])/48*(r.getHeight()-48);
-        g.setColour(colors[i].withAlpha(.35f)); g.drawVerticalLine((int)x,r.getY(),r.getBottom()-20);
+        g.setColour(colors[i].withAlpha(.35f)); g.drawVerticalLine((int)x,r.getY()+16,r.getBottom()-20);
         raised(g,{x-11,y-11,22,22},11,2,colors[i]); g.setColour(onAccent); g.setFont(uiFont(12.f,Weight::bold));
         g.drawText(i==0 ? "L" : i==1 ? "M" : "H",(int)x-11,(int)y-11,22,22,juce::Justification::centred);
     }
 }
 void LOWWEditor::mouseDown(const juce::MouseEvent& e) {
-    const auto point=e.position/uiScale; const auto r=layout::graph;
+    const auto point=(e.position-uiOffset)/uiScale; const auto r=layout::graph;
     if(!r.contains(point)) return;
     const auto s=owner.settings(); const float hz[] {s.lowCut,s.parallel ? 400.f : std::sqrt(s.lowCut*s.highCut),s.highCut};
     const float levels[] {s.lowLevel,s.midLevel,s.highLevel};
@@ -526,6 +582,8 @@ void LOWWEditor::mouseDown(const juce::MouseEvent& e) {
     for(int i=0;i<3;++i) { const juce::Point<float> centre{r.getX()+std::log(hz[i]/20.f)/std::log(1000.f)*r.getWidth(),r.getY()+14+(12-levels[i])/48*(r.getHeight()-48)};
         const float distance=centre.getDistanceFrom(point); if(distance<nearest) { nearest=distance; draggedBand=i; } }
     if(draggedBand<0) return;
+    // Keep the grab offset so a click beside a handle doesn't make it jump.
+    grabOffset=point-juce::Point<float>{r.getX()+std::log(hz[draggedBand]/20.f)/std::log(1000.f)*r.getWidth(),r.getY()+14+(12-levels[draggedBand])/48*(r.getHeight()-48)};
     draggedLevel=draggedBand==0 ? "lowLevel" : draggedBand==1 ? "midLevel" : "highLevel";
     draggedFrequency=draggedBand==0 ? (s.parallel ? "parallelLow" : "lowCut") : draggedBand==2 ? (s.parallel ? "parallelHigh" : "highCut") : "";
     owner.state.getParameter(draggedLevel)->beginChangeGesture();
@@ -533,11 +591,19 @@ void LOWWEditor::mouseDown(const juce::MouseEvent& e) {
 }
 void LOWWEditor::mouseDrag(const juce::MouseEvent& e) {
     if(draggedBand<0) return;
-    const auto point=e.position/uiScale;
+    const auto point=(e.position-uiOffset)/uiScale-grabOffset;
     auto set=[this](const juce::String& id,float value) { auto* p=owner.state.getParameter(id); p->setValueNotifyingHost(p->convertTo0to1(juce::jlimit(p->getNormalisableRange().start,p->getNormalisableRange().end,value))); };
     const auto r=layout::graph;
     set(draggedLevel,12-(point.y-r.getY()-14)/(r.getHeight()-48)*48);
     if(draggedFrequency.isNotEmpty()) set(draggedFrequency,20*std::pow(1000.f,(point.x-r.getX())/r.getWidth()));
+}
+bool LOWWEditor::keyPressed(const juce::KeyPress& key) {
+    // Focus parked on the editor after a click: Tab / Shift-Tab re-enter the controls at either end.
+    if(key.getKeyCode()!=juce::KeyPress::tabKey || !hasKeyboardFocus(false)) return false;
+    const auto controls=createKeyboardFocusTraverser()->getAllComponents(this);
+    if(controls.empty()) return false;
+    (key.getModifiers().isShiftDown() ? controls.back() : controls.front())->grabKeyboardFocus();
+    return true;
 }
 void LOWWEditor::mouseUp(const juce::MouseEvent&) {
     if(draggedBand<0) return;
@@ -550,9 +616,10 @@ void LOWWEditor::updateTuner() {
     while(owner.readTuner(tunerSamples.data(),count)) got=true;
     if(!tuner.getToggleState() || !got) return;
     const auto reading=loww::detectPitch(tunerSamples.data(),count,owner.currentRate.load());
-    if(reading.frequency<=0) { tunerLabel.setText("Play a single note",juce::dontSendNotification); return; }
+    if(reading.frequency<=0) { setTuner("Play a single note",ink); return; }
     static const char* notes[] {"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};
-    tunerLabel.setText(juce::String(notes[(reading.midi%12+12)%12])+juce::String(reading.midi/12-1)+"   "+juce::String(reading.cents,1)+" cents   "+juce::String(reading.frequency,1)+" Hz",juce::dontSendNotification);
+    // Cyan within 5 cents reads as in tune at a glance.
+    setTuner(juce::String(notes[(reading.midi%12+12)%12])+juce::String(reading.midi/12-1)+"   "+(reading.cents>=.05f ? "+" : "")+juce::String(std::abs(reading.cents)<.05f ? 0.f : reading.cents,1)+" cents   "+juce::String(reading.frequency,1)+" Hz",std::abs(reading.cents)<=5 ? cyan : ink);
 }
 void LOWWEditor::timerCallback() {
     bool got=false; while(owner.readSpectrum(fftData.data(),2048)) got=true;
@@ -563,15 +630,46 @@ void LOWWEditor::timerCallback() {
     if(++tunerTicks%3==0) updateTuner();
     forgetFileAfterHostRestore();
     const auto s=owner.settings(); dials[5]->setVisible(!s.parallel); dials[24]->setVisible(s.parallel); dials[10]->setVisible(!s.parallel); dials[19]->setVisible(s.parallel);
-    dials[12]->label.setText(s.parallel ? "100 LS" : "80",juce::dontSendNotification);
-    dials[17]->label.setText(s.parallel ? "5k HS" : "5k",juce::dontSendNotification);
+    // Controls whose stage is switched off dim, so the panel shows what is actually processing.
+    // Dial arcs fade and button text drops to muted; text stays above 4.5:1 either way.
+    const auto dim=[](Dial& d,bool on) { d.slider.getProperties().set("dimmed",!on); };
+    const auto dimButton=[](juce::Button& b,bool on) {
+        b.setColour(juce::ToggleButton::textColourId,on ? ink : muted); b.setColour(juce::TextButton::textColourOffId,on ? ink : muted);
+    };
+    dim(*dials[1],s.gateOn); dim(*dials[4],s.lowOn); dim(*dials[7],s.midOn); dim(*dials[9],s.highOn);
+    for(size_t i=12;i<18;++i) dim(*dials[i],s.eqOn);
+    for(size_t i=0;i<4;++i) dim(*dials[20+i],s.cabOn && s.cabEnabled[i/2]);
+    for(size_t slot=0;slot<2;++slot) {
+        const bool on=s.cabOn && s.cabEnabled[slot];
+        dimButton(*switches[10+slot*2],on); dimButton(loadCab[slot],on); dimButton(stockCab[slot],on);
+    }
+    dials[12]->label.setText(s.parallel ? "100" : "80",juce::dontSendNotification);
     presets.setText(owner.presetName()+(owner.presetDirty.load() ? " *" : ""),juce::dontSendNotification);
     const auto pitchInfo = std::abs(s.transpose) > .001f ? "  /  transpose latency " + juce::String(1000.0*owner.getLatencySamples()/owner.currentRate.load(),1) + " ms" : juce::String();
     presetInfo.setText(owner.presetInfo()+pitchInfo,juce::dontSendNotification);
-    if(owner.midiLearn.load()>=0) status.setText("MIDI learn: move a controller. Right-click a dial and Clear to cancel.",juce::dontSendNotification);
+    if(const int learning=owner.midiLearn.load(); learning>=0) {
+        learningParameter=learning;
+        setStatus("MIDI learn: move a controller. Right-click a dial and Clear to cancel.",Tone::active);
+    } else if(learningParameter>=0) {
+        // Learning ended: report the new mapping, or that it was cancelled.
+        juce::String message="MIDI learn cancelled";
+        for(int cc=0;cc<128;++cc) if(owner.midiMap[(size_t)cc].load()==learningParameter)
+            message="CC "+juce::String(cc)+" now controls "+owner.getParameters()[learningParameter]->getName(100);
+        setStatus(message); learningParameter=-1;
+    }
     repaint();
 }
-void LOWWEditor::showResult(const juce::Result& result) { status.setText(result.wasOk() ? "Cabinet updated" : result.getErrorMessage(),juce::dontSendNotification); }
+void LOWWEditor::setStatus(const juce::String& text,Tone tone) {
+    const juce::Colour colours[] {muted,ink,cyan,clip};
+    status.setColour(juce::Label::textColourId,colours[(int)tone]); status.setText(text,juce::dontSendNotification);
+}
+void LOWWEditor::setStatus(const juce::Result& result,const juce::String& done) {
+    if(result.wasOk()) setStatus(done); else setStatus(result.getErrorMessage(),Tone::error);
+}
+void LOWWEditor::setTuner(const juce::String& text,juce::Colour colour) {
+    tunerLabel.setColour(juce::Label::textColourId,colour); tunerLabel.setText(text,juce::dontSendNotification);
+}
+void LOWWEditor::showResult(const juce::Result& result) { setStatus(result,"Cabinet updated"); }
 void LOWWEditor::chooseIR(int slot) {
     chooser=std::make_unique<juce::FileChooser>("Choose cabinet IR",juce::File{},"*.wav;*.aif;*.aiff");
     chooser->launchAsync(juce::FileBrowserComponent::openMode|juce::FileBrowserComponent::canSelectFiles,[safe=juce::Component::SafePointer<LOWWEditor>(this),slot](const juce::FileChooser& fc) {
@@ -587,11 +685,11 @@ void LOWWEditor::forgetFileAfterHostRestore() {
 void LOWWEditor::savePresetAs(const juce::File& file) {
     const auto result=owner.savePreset(file);
     if(result.wasOk()) { currentFile=file; currentFactory=-1; refreshPresets(); }
-    status.setText(result.wasOk() ? "Preset saved" : result.getErrorMessage(),juce::dontSendNotification);
+    setStatus(result,"Preset saved");
 }
 void LOWWEditor::presetFile(bool saving) {
     const auto dir=LOWWProcessor::presetFolder();
-    if(saving) { const auto result=dir.createDirectory(); if(result.failed()) { status.setText(result.getErrorMessage(),juce::dontSendNotification); return; } }
+    if(saving) { const auto result=dir.createDirectory(); if(result.failed()) { setStatus(result.getErrorMessage(),Tone::error); return; } }
     chooser=std::make_unique<juce::FileChooser>(saving ? "Save LOWW preset" : "Open LOWW preset",saving ? dir.getChildFile(juce::File::createLegalFileName(owner.presetName())+".loww") : dir,saving ? "*.loww" : "*.loww;*.trifold");
     chooser->launchAsync((saving ? juce::FileBrowserComponent::saveMode|juce::FileBrowserComponent::warnAboutOverwriting : juce::FileBrowserComponent::openMode)|juce::FileBrowserComponent::canSelectFiles,
         [safe=juce::Component::SafePointer<LOWWEditor>(this),saving](const juce::FileChooser& fc) {
@@ -599,7 +697,7 @@ void LOWWEditor::presetFile(bool saving) {
             if(!saving) {
                 const auto file=fc.getResult(); const auto result=safe->owner.openPreset(file);
                 if(result.wasOk()) { safe->currentFile=file; safe->currentFactory=-1; safe->refreshPresets(); }
-                safe->status.setText(result.wasOk() ? "Preset opened" : result.getErrorMessage(),juce::dontSendNotification);
+                safe->setStatus(result,"Preset opened");
                 return;
             }
             const auto file=fc.getResult().withFileExtension("loww");

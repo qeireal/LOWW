@@ -46,30 +46,15 @@ void Engine::prepare(double sr, int maxBlockSize, float transpose) {
     lowPhase.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
     for (auto& cab : cabinet) cab.prepare({sr, (juce::uint32) capacity, 2});
     fixedMid.setBandPass(sr * 4, 400);
-    monoBlend.reset(sr * 4, .02); monoBlend.setCurrentAndTargetValue(0);
-    for (int i = 0; i < 2; ++i) {
-        cabGains[(size_t)i].reset(sr, .02); cabGains[(size_t)i].setCurrentAndTargetValue(i == 0 ? 1.f : 0.f);
-        cabPans[(size_t)i].reset(sr, .02); cabPans[(size_t)i].setCurrentAndTargetValue(0);
-    }
+    monoBlend.reset(sr * 4, .02);
+    for (int i = 0; i < 2; ++i) { cabGains[(size_t)i].reset(sr, .02); cabPans[(size_t)i].reset(sr, .02); }
+    dryDelay.setMaximumDelayInSamples(baseLatency + pitchLatency + 1);
     dryDelay.prepare({sr, (juce::uint32) capacity, 2});
     dryDelay.setDelay((float) latencySamples);
     for (auto* sm : {&inputGain, &outputGain, &wetMix, &bypassBlend, &cabMix, &eqMix}) sm->reset(sr, .02);
     for (auto* sm : {&midAmount, &highAmount, &lowGain, &midGain, &highGain, &compAmount})
         sm->reset(sr * 4, .02);
-    inputGain.setCurrentAndTargetValue(1);
-    outputGain.setCurrentAndTargetValue(juce::Decibels::decibelsToGain(-6.0f));
-    wetMix.setCurrentAndTargetValue(1);
-    bypassBlend.setCurrentAndTargetValue(1);
     lowFrequency.reset(sr * 4, .03); highFrequency.reset(sr * 4, .03);
-    lowFrequency.setCurrentAndTargetValue(200); highFrequency.setCurrentAndTargetValue(800);
-    lowGain.setCurrentAndTargetValue(1);
-    midGain.setCurrentAndTargetValue(.5f);
-    highGain.setCurrentAndTargetValue(.35f);
-    midAmount.setCurrentAndTargetValue(.35f);
-    highAmount.setCurrentAndTargetValue(.25f);
-    compAmount.setCurrentAndTargetValue(.5f);
-    cabMix.setCurrentAndTargetValue(1);
-    eqMix.setCurrentAndTargetValue(1);
     reset();
 }
 void Engine::reset() {
@@ -83,6 +68,7 @@ void Engine::reset() {
     gateEnvelope = 0;
     gateGain = 1;
     previousEq.fill(999);
+    primed = false;
 }
 void Engine::loadIR(juce::AudioBuffer<float>&& ir, double sr, int slot) {
     cabinet[(size_t)juce::jlimit(0, 1, slot)].loadImpulseResponse(std::move(ir), sr, juce::dsp::Convolution::Stereo::yes,
@@ -159,6 +145,15 @@ void Engine::process(juce::AudioBuffer<float>& buffer, const Settings& s) {
             else equalizer[i].setPeak(rate, frequencies[i], s.eq[i]);
             previousEq[i] = s.eq[i];
         }
+    if (!primed) {
+        // After prepare or reset, start at the current settings instead of ramping from stale values.
+        for (auto* sm : {&monoBlend, &cabGains[0], &cabGains[1], &cabPans[0], &cabPans[1], &inputGain, &outputGain, &wetMix,
+                         &bypassBlend, &midAmount, &highAmount, &lowGain, &midGain, &highGain, &compAmount, &cabMix, &eqMix,
+                         &lowFrequency, &highFrequency})
+            sm->setCurrentAndTargetValue(sm->getTargetValue());
+        for (auto& band : equalizer) band.c = band.target;
+        primed = true;
+    }
     bands.clear();
     const auto gateThreshold = juce::Decibels::decibelsToGain(s.gate);
     const auto gateRelease = (float) std::exp(-1.0 / (.08 * rate));
@@ -170,7 +165,8 @@ void Engine::process(juce::AudioBuffer<float>& buffer, const Settings& s) {
             const auto raw = buffer.getSample(ch, i);
             dryDelay.pushSample(ch, raw);
             dry.setSample(ch, i, dryDelay.popSample(ch));
-            peak = juce::jmax(peak, std::abs(raw * inGain));
+            // Detect on the signal being gated; the pitched path lags the raw input.
+            peak = juce::jmax(peak, std::abs((shift ? pitched.getSample(ch, i) : raw) * inGain));
         }
         gateEnvelope = juce::jmax(peak, gateEnvelope * gateRelease);
         const auto target = !s.gateOn || gateEnvelope >= gateThreshold ? 1.0f : 0.0f;

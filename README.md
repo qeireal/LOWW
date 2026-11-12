@@ -1,93 +1,193 @@
-<img src="docs/logo.png" width="96" alt="LOWW logo">
+<p align="center">
+  <img src="docs/logo.png" width="88" alt="LOWW logo">
+</p>
 
-# LOWW 0.2.1
+<h1 align="center">LOWW</h1>
 
-A native C++20 / JUCE bass processor for macOS, with three-band processing, dual cabinet IRs, an interactive frequency graph, transpose, tuner, MIDI CC learn, and original factory tones.
+<p align="center">
+  <strong>Shape your bass from low foundation to high edge.</strong><br>
+  A native bass processor for macOS, available as a standalone app, VST3, and Audio Unit.
+</p>
 
-Local Apple Silicon builds are in `dist/macOS/`: `LOWW.app`, `LOWW.vst3`, and `LOWW.component`. They are ad-hoc signed, not notarized, published, or installed in system plugin folders. `dist/archive/0.1.3/` retains the previous packages. A running older instance must be restarted to load the new executable; save its tone first.
+<p align="center">
+  <a href="#get-started">Get started</a> ·
+  <a href="#build-from-source">Build</a> ·
+  <a href="#development">Develop</a> ·
+  <a href="docs/user-guide.md">User guide</a>
+</p>
 
-## Start playing
+![LOWW interface showing the Deep Edge preset, interactive frequency graph, three processing bands, six-band EQ, and dual cabinet controls](docs/screenshots/editor-1120.png)
 
-1. Open `dist/macOS/LOWW.app`.
-2. Open **Audio settings...** and choose your instrument interface, physical input, output, and buffer size.
-3. Leave **Mono** selected for one instrument input. **Stereo** preserves two physical inputs; the separate **Mono lows** tone option centres only the low band.
-4. Enable **Monitor input**. Use your interface and headphones to avoid a microphone/speaker feedback loop.
+## What it does
 
-Audio opens disconnected and device selection remains explicit. It does not reopen the last device or preset automatically. DAW plugins use the host's audio layout.
+LOWW combines a compressed low band with independent mid and high saturation, giving you control over weight, texture, and attack in one interface. Built with C++20 and JUCE, it runs on its own or inside a DAW.
 
-## Processing modes
+- **Three-band processing** with parallel voicing and an alternative Linkwitz–Riley crossover mode.
+- **An interactive frequency graph** with draggable band controls and a live spectrum.
+- **Two cabinet IR slots** with level, pan, polarity, and portable impulse-response storage.
+- **Tone shaping** with a gate, six-band EQ, wet/dry blend, and optional mono lows.
+- **Practice tools** including a ±12-semitone transpose, live tuner, and standalone metronome.
+- **11 original factory tones**, user presets, and MIDI CC learn.
 
-**Parallel voicing** (new-instance default) uses independent low-pass (70–400 Hz), fixed 400 Hz band-pass (Q 0.7071), and high-pass (100–2000 Hz) branches. The low compressor has a 3 ms attack, 600 ms release and fixed 4:1 ratio; its amount adjusts threshold/makeup with a short fade to unity at zero. The outer EQ bands are shelves at 100 Hz and 5 kHz; the four middle bell bands are 250, 500, 1000 and 1500 Hz. All six gains span ±12 dB. Mono lows is off by default and enabled by the new rig-study presets.
+See the [user guide](docs/user-guide.md) for controls, signal flow, preset handling, and processing details.
 
-With Parallel voicing **off**, the original fourth-order Linkwitz–Riley crossover topology, 15 ms / 120 ms compressor with variable ratio, and six bell EQ bands are retained. Its low/high ranges remain 60–400 / 500–3000 Hz. Older schema-1 `.loww` and `.trifold` presets migrate into this original mode. The original four factory tones also retain it. Existing parameter IDs and their ranges are retained; new independent filter parameters are used in Parallel mode.
+## Get started
 
-Both modes use original asymmetric mid and symmetric high waveshaping with 4× IIR oversampling. These are independent implementations. The documented Parallax controls informed the new mode, but its proprietary filters, saturation, compressor transfer curve and cabinet sound have not been measured or matched. Parallel mode's summed response is intentionally not the flat crossover reconstruction tested for the original mode.
+### Use a prebuilt app or plugin
 
-Input trim → gate/transpose → 4× oversampling → three bands → low compression and mid/high saturation → two parallel cabinet slots on mids/highs → six-band EQ → wet/dry blend → output trim → latency-aligned bypass.
+Every commit on `main` is built by [GitHub Actions](https://github.com/qeireal/LOWW/actions/workflows/build.yml): open the latest run and download the archive for your platform from **Artifacts**. It holds a universal macOS build (Apple Silicon and Intel: app, VST3, AU), Windows x64 or Linux x64 (standalone and VST3). Artifacts are kept for 30 days. These CI builds are ad-hoc signed or unsigned and not notarized.
 
-The wet/dry branch shares the selected band topology and transpose. Whole-processor bypass returns the original input with reported latency compensation. Band processing switches retain clean signal rather than muting the band. Gains, drive, compression amount, filter frequencies, cabinet mix controls, EQ coefficients and bypasses are smoothed. Switching the topology is a tone change, not a transparent morph.
+The repository also includes [Apple Silicon packages](dist/) and unpacked bundles in [`dist/macOS/`](dist/macOS/). The builds are ad-hoc signed and are not notarized. macOS may require approval before opening them.
 
-## Controls and tools
+| Format | Location | Use |
+| --- | --- | --- |
+| Standalone | `dist/macOS/LOWW.app` | Play through an audio interface without a DAW |
+| VST3 | `dist/macOS/LOWW.vst3` | Load LOWW as an effect in a VST3 host |
+| Audio Unit | `dist/macOS/LOWW.component` | Load LOWW as an effect in an AU host |
 
-- Cyan and slate curves show each band filter and its level; the white curve shows their combined response. They follow both processing modes and remain visible with Spectrum off. These guides exclude compression, distortion, cabinet and EQ.
-- Drag **L/H** horizontally to change their filter frequency and vertically to change band level. Drag **M** vertically for mid level. **Spectrum** toggles the live output trace; handles remain available.
-- Double-click a dial to reset it; click its value to type. Right-click a dial for **Learn next MIDI CC** or **Clear MIDI mapping**. One incoming CC completes learning. Mappings are stored in host state; loading a tone preset keeps the current mappings. Enable your MIDI input in standalone Audio settings, or route MIDI in your host. VST3 and standalone accept MIDI; AU routing depends on host support for MIDI to an audio-effect unit. Physical MIDI hardware was not tested.
-- **Transpose** spans −12 to +12 semitones using Signalsmith Stretch. At zero, the original low-latency audio path is retained. Nonzero settings add the library's analysis/synthesis latency, reported to the host and displayed beside the preset description while audio is running. This is an offline-verified pitch shifter, not a claim of Parallax's low-latency performance. Crossing zero changes latency; change tuning between takes rather than expecting a seamless pitch pedal.
-- **Live tuner** shows note, cents and frequency from the unprocessed input, calibrated to A=440 Hz. Play one note at a time. Its computation runs on the editor thread. It has no mute function or alternate reference calibration yet.
-- Standalone **Click**, **Tap**, BPM (30–300), and 1–12 beats per bar provide a quarter-note metronome with a first-beat accent. Metronome settings stay outside tone presets. These are not DAW-synchronised subdivisions or selectable accent samples.
-- The editor scales from 840×675 to 1680×1350. The standalone adds its audio-routing bar. Input/output peak meters and compression reduction are visible.
+For a per-user plugin installation, copy the VST3 bundle to `~/Library/Audio/Plug-Ins/VST3/` or the AU bundle to `~/Library/Audio/Plug-Ins/Components/`, creating the folder if needed. Rescan plugins or restart your DAW afterward.
 
-## Cabinet slots
+### Play your first note
 
-A and B each have an IR loader, stock response, enable, level, pan and polarity inversion. B starts disabled. Both affect mids/highs only. Panning is stereo balance with unity centre; mono output ignores pan. Two equal IRs at equal levels and opposite polarity cancel the upper-band cabinet signal.
+1. Open **LOWW.app**.
+2. Open **Audio settings...** and select your audio interface, physical input, output, and buffer size.
+3. Use **Mono** for one instrument input or **Stereo** for two inputs.
+4. Enable **Monitor input** and choose a factory tone.
 
-WAV/AIFF IRs may have one or two channels, run at 8–192 kHz, and last up to two seconds. Both slots embed imported samples in saved state for portable recall. Factory tone selection preserves the chosen IRs **and all cabinet controls**, including enable states. Exported factory files use the original synthetic stock response.
+Use headphones when monitoring to avoid speaker feedback. The standalone app starts with audio disconnected; select your device and preset each session. Plugins use the DAW's audio routing.
 
-The stock response is an original short filtered impulse with reflections, not a measured cabinet. No measured microphone bank, mic-position interpolation, or copied commercial cabinet assets are included. See the research notes for licensed-data leads and the requirements for adding real virtual microphones.
+User presets live in `~/Documents/LOWW Presets/`. Imported cabinet IRs are embedded when you save a preset. Factory tone changes preserve your cabinet settings.
 
-## Presets
+## Build from source
 
-The bank contains **11 original tones**:
+### Requirements
 
-- Original mode: Foundation, Clean weight, Pick attack, Split fury.
-- Parallel rig studies: Deep Edge, Progressive Grind, Mid Focus, Dual Amp Growl, Modern Articulation, Clean Funk, Midrange Roar.
+- macOS with the Xcode Command Line Tools and a C++20 compiler.
+- CMake **3.24 or newer**, Ninja, and Git.
+- Internet access for the first configure, which fetches JUCE and Signalsmith Linear.
 
-The new recipes draw on documented rig approaches associated with Geddy Lee, Chris Squire, Justin Chancellor, Tim Commerford, Nolly Getgood, Flea and Lemmy. They are original, unendorsed starting points; they do not reproduce an artist's recorded sound. The UI identifies the inspiration. Numerical LOWW settings are inferred, not transcribed artist settings. See [artist-rig-research.md](docs/artist-rig-research.md) for sources, uncertainties, complete recipes and cabinet licensing.
+Install Apple's tools with `xcode-select --install`. If you use Homebrew, install the build tools with `brew install cmake ninja`.
 
-The selected name remains visible; `*` indicates an edit. Previous/next cycle through factory and user presets. **Save** updates the opened user file; **Save as...** writes a new file; **Open** imports a `.loww` or legacy `.trifold` file. The **Folder** menu refreshes the library, opens its directory, resets the tone to Foundation, or moves the current user file to Trash. Factory entries cannot be deleted through this menu.
+The packaged binaries in `dist/` target Apple Silicon. The project sets a minimum macOS deployment target of 11.0. CI builds and tests Windows x64 and Linux x64 as well; those builds have not been tried in third-party hosts.
 
-The user library is `~/Documents/LOWW Presets/`. Subfolders appear as relative paths in the browser. Standalone does not automatically reopen the last preset. MIDI mappings belong to host state rather than portable tone files. Imported IR samples embedded in a preset may carry redistribution restrictions; the bundled bank contains no third-party IR audio.
-
-## Build and verification
-
-Requires CMake 3.24+, Git and a C++20 platform toolchain. JUCE is pinned to 8.0.12 (`29396c22c93392d6738e021b83196283d6e4d850`), or provide `JUCE_SOURCE_DIR`. Signalsmith Stretch headers are vendored at `a670068d9aeb64913331d5cc29337b19a457a7df`; its CMake file fetches Signalsmith Linear 0.6.4. The UI embeds the Open Runde typeface (© 2023 Laurids Kern, SIL OFL 1.1; `Resources/Fonts/OFL.txt`). Dependency licenses remain applicable; see `third_party/signalsmith-stretch/` and the packaged license folder.
-
-```sh
-rtk cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-rtk cmake --build build --parallel 6
-rtk ctest --test-dir build -C Release --output-on-failure
-```
-
-macOS builds standalone, VST3 and AU. The AU retains its existing audio-effect type and manufacturer/product codes. Windows builds and third-party DAW/hardware sessions remain unverified. Set `CMAKE_OSX_ARCHITECTURES="arm64;x86_64"` for a universal build; this delivery is arm64 only.
-
-`VALIDATION.txt` contains the final test run. Tests cover original crossover reconstruction, bypass latency, stereo monitoring, compression/distortion/EQ, both IR slots and invalid state, legacy migration, factory/file recall, MIDI learn/clear/host recall, transpose, tuner across four sample rates, metronome output, and actual VST3/AU bundle hosting. The AU test registers only inside its process and needs access to macOS Audio Component services. UI snapshots were reviewed at 1120×900 and 840×675.
-
-Additional test utilities:
+### Configure and compile
 
 ```sh
-rtk build/LOWWTests --export-presets /absolute/output/folder
-rtk build/LOWWTests --snapshot /absolute/output/editor.png 1120 900
-rtk build/LOWWTests --demo /absolute/output/folder
-rtk build/LOWWTests --logo /absolute/output/Icon.png 1024
+git clone https://github.com/qeireal/LOWW.git
+cd LOWW
+
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
 ```
 
-`demo/` retains the earlier synthetic dry/processed bass example. It is not a real instrument or artist comparison. Formal audio-thread allocation/race instrumentation, loudness-matched real-DI listening, proprietary sound matching, measured microphone controls, AAX, installers and notarization remain outside this local release.
+This builds the standalone app, VST3, Audio Unit, and test executable. Build products stay in `build/`; CMake does not install plugins or update the packaged files in `dist/`.
 
-## Code map
+| Output | Path |
+| --- | --- |
+| Standalone app | `build/LOWW_artefacts/Release/Standalone/LOWW.app` |
+| VST3 plugin | `build/LOWW_artefacts/Release/VST3/LOWW.vst3` |
+| Audio Unit | `build/LOWW_artefacts/Release/AU/LOWW.component` |
+| Test executable | `build/LOWWTests` |
 
-- `Source/Engine.*`: band processing, oversampling, transpose, dual convolution, EQ and smoothing.
-- `Source/Processor.*`: parameters, preset migration/files, IR mailboxes, MIDI, audio FIFOs and standalone click.
-- `Source/Editor.*`: scalable native interface, spectrum, interactive handles, preset and cabinet controls.
-- `Source/Tuner.h`: editor-side difference-function pitch detection.
-- `Source/Standalone.cpp`, `Source/InstrumentPlayer.h`: explicit device setup, MIDI collection and mono/stereo monitoring.
-- `Tests/AudioTests.cpp`, `Tests/MonitoringTests.h`: offline DSP and host/device regression checks.
+Run the app:
+
+```sh
+open build/LOWW_artefacts/Release/Standalone/LOWW.app
+```
+
+<details>
+<summary>Build options</summary>
+
+Use a local JUCE checkout instead of fetching the pinned revision:
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DJUCE_SOURCE_DIR=/absolute/path/to/JUCE
+```
+
+Build for both Apple Silicon and Intel Macs in a separate directory:
+
+```sh
+cmake -S . -B build/universal -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+cmake --build build/universal --parallel
+```
+
+The universal configuration is available through CMake; the included packages and recorded validation cover Apple Silicon.
+
+To omit the test executable, add `-DLOWW_BUILD_TESTS=OFF` when configuring. Use a separate build directory when changing CMake generators.
+
+</details>
+
+## Development
+
+### Set up a debug build
+
+Keep development builds separate from the release output:
+
+```sh
+cmake -S . -B build/debug -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+cmake --build build/debug --parallel
+open build/debug/LOWW_artefacts/Debug/Standalone/LOWW.app
+```
+
+Open the repository in a C++ editor with CMake support. Point clangd or your editor's C++ tooling at `build/debug/compile_commands.json` for code navigation and completion.
+
+After editing, rebuild with `cmake --build build/debug --parallel`. To build only the standalone app, add `--target LOWW_Standalone`. Quit and reopen the app to load the new executable; save your tone before restarting. You can attach a debugger to LOWW or launch `build/debug/LOWW_artefacts/Debug/Standalone/LOWW.app/Contents/MacOS/LOWW` directly under LLDB.
+
+### Find the code
+
+| Area | Files | Responsibility |
+| --- | --- | --- |
+| Audio engine | [`Source/Engine.cpp`](Source/Engine.cpp), [`Source/Engine.h`](Source/Engine.h) | Band processing, oversampling, transpose, convolution, EQ, smoothing |
+| Plugin processor | [`Source/Processor.cpp`](Source/Processor.cpp), [`Source/Processor.h`](Source/Processor.h) | Parameters, state, presets, IR loading, MIDI, metronome |
+| Interface | [`Source/Editor.cpp`](Source/Editor.cpp), [`Source/Editor.h`](Source/Editor.h) | Controls, spectrum, graph interaction, scalable layout |
+| Tuner | [`Source/Tuner.h`](Source/Tuner.h) | Input pitch detection |
+| Standalone host | [`Source/Standalone.cpp`](Source/Standalone.cpp), [`Source/InstrumentPlayer.h`](Source/InstrumentPlayer.h) | Device setup, MIDI input, mono/stereo monitoring |
+| Tests | [`Tests/AudioTests.cpp`](Tests/AudioTests.cpp), [`Tests/MonitoringTests.h`](Tests/MonitoringTests.h) | DSP, state, monitoring, plugin-host checks |
+
+### Run the checks
+
+Build all targets before running CTest, because the host checks load the compiled plugin bundles:
+
+```sh
+cmake --build build/debug --parallel
+ctest --test-dir build/debug -C Debug --output-on-failure
+```
+
+For a release build, use `ctest --test-dir build -C Release --output-on-failure`.
+
+The four macOS checks cover audio processing and state, instrument monitoring, VST3 hosting, and AU hosting. The AU check needs access to macOS Audio Component services. [`VALIDATION.txt`](VALIDATION.txt) records an earlier successful run; physical MIDI hardware and third-party DAW sessions remain unverified.
+
+### Generate development assets
+
+The test executable also exports presets, interface screenshots, synthetic audio demos, and the app icon. These examples use the debug build and write into the ignored `build/` directory:
+
+```sh
+build/debug/LOWWTests --snapshot "$PWD/build/editor.png" 1120 900
+build/debug/LOWWTests --export-presets "$PWD/build/presets"
+build/debug/LOWWTests --demo "$PWD/build/demo"
+build/debug/LOWWTests --logo "$PWD/build/Icon.png" 1024
+```
+
+## Documentation and support
+
+- [User guide](docs/user-guide.md): processing modes, controls, cabinet slots, and presets.
+- [Preset research](docs/artist-rig-research.md): inspiration, sources, and tone recipes.
+- [Recorded validation](VALIDATION.txt): results from the existing regression suite.
+- [Synthetic audio examples](demo/): dry and processed bass demos.
+
+Report bugs or suggest improvements through [GitHub Issues](https://github.com/qeireal/LOWW/issues). Include your macOS version, CPU architecture, app or plugin format, host version, and steps to reproduce. For code contributions, describe the behavior you changed and the checks you ran.
+
+## Dependencies and credits
+
+| Dependency | Revision | License information |
+| --- | --- | --- |
+| JUCE | 8.0.12, pinned to `29396c22c93392d6738e021b83196283d6e4d850` | [Bundled license](dist/licenses/JUCE-LICENSE.md) |
+| Signalsmith Stretch | Vendored at `a670068d9aeb64913331d5cc29337b19a457a7df` | [MIT license](third_party/signalsmith-stretch/LICENSE.txt) |
+| Signalsmith Linear | 0.6.4, fetched by CMake | [MIT license](dist/licenses/Signalsmith-Linear-MIT.txt) |
+| Open Runde | Embedded interface typeface by Laurids Kern | [SIL Open Font License 1.1](Resources/Fonts/OFL.txt) |
+
+Factory tones are original, unendorsed starting points. The stock cabinet response is synthetic; the project includes no commercial cabinet IRs. See the [user guide](docs/user-guide.md) for the scope and limitations of the audio models.
